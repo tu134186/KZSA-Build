@@ -7,6 +7,8 @@
 #import "kzeye_b64.h"
 
 #define KZ_DOMAIN "com.minis.kzprobe"
+#define KZ_PREF_DOMAIN "com.minis.kzsa"
+#define KZ_NOTIFY "com.minis.kzsa.changed"
 #define KZ_EYE @"/Library/KZTheme/eye/tomoe2.png"
 #define KZ_EYE_ALT @"/Library/KZTheme/eye/tomoe.png"
 
@@ -49,6 +51,31 @@ static NSString *KZElementId(UIView *v) {
     return nil;
 }
 
+static NSString *KZPrefStr(NSString *key) {
+    CFPropertyListRef v = CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR(KZ_PREF_DOMAIN));
+    if (!v) return nil;
+    NSString *s = [NSString stringWithFormat:@"%@", (__bridge id)v];
+    CFRelease(v);
+    return s;
+}
+
+static double KZPrefNum(NSString *key, double dflt) {
+    CFPropertyListRef v = CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR(KZ_PREF_DOMAIN));
+    if (!v) return dflt;
+    double d = [(__bridge NSNumber *)v doubleValue];
+    CFRelease(v);
+    return d > 0 ? d : dflt;
+}
+
+static UIImage *KZUserImage(void) {
+    NSString *b64 = KZPrefStr(@"eyeImage");
+    if (b64.length < 200) return nil;
+    NSData *d = [[NSData alloc] initWithBase64EncodedString:b64
+                                                    options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    if (d.length < 200) return nil;
+    return [UIImage imageWithData:d];
+}
+
 static UIView *KZEye(CGRect frame) {
     if (frame.size.width < 4) frame = CGRectMake(0, 0, 22, 22);
     UIView *v = [[UIView alloc] initWithFrame:frame];
@@ -57,8 +84,8 @@ static UIView *KZEye(CGRect frame) {
     v.layer.masksToBounds = YES;
     v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
-    UIImage *img = nil;
-    {
+    UIImage *img = KZUserImage();
+    if (!img) {
         NSData *d = [[NSData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:kKZeyeB64]
                                                         options:NSDataBase64DecodingIgnoreUnknownCharacters];
         if (d.length > 200) img = [UIImage imageWithData:d];
@@ -79,7 +106,7 @@ static UIView *KZEye(CGRect frame) {
     CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
     spin.fromValue = @(0.0);
     spin.toValue = @(M_PI * 2.0);
-    spin.duration = 1.5;
+    spin.duration = KZPrefNum(@"duration", 1.5);
     spin.repeatCount = INFINITY;
     [iv.layer addAnimation:spin forKey:@"kzspin"];
 
@@ -123,6 +150,9 @@ static void KZTryReplace(UIView *container) {
     CGRect b = pv.bounds;
     CGFloat side = MIN(b.size.width, b.size.height);
     if (side < 4) side = 22;
+    double scale = KZPrefNum(@"scale", 1.0);
+    if (scale < 0.4) scale = 1.0;
+    side = side * scale;
     UIView *eye = KZEye(CGRectMake(0, 0, side, side));
     eye.tag = 0x4B5A;
     eye.frame = CGRectMake((b.size.width - side) / 2.0, (b.size.height - side) / 2.0, side, side);
@@ -169,8 +199,46 @@ static void KZTryInstall(void) {
     }
 }
 
+static NSArray<UIWindow *> *KZWindows(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (UIScene *sc in [[UIApplication sharedApplication] connectedScenes]) {
+        if ([sc isKindOfClass:[UIWindowScene class]]) {
+            [out addObjectsFromArray:((UIWindowScene *)sc).windows];
+        }
+    }
+    return out;
+}
+
+static void KZRemoveEyes(UIView *v) {
+    for (UIView *s in [v.subviews copy]) {
+        if (s.tag == 0x4B5A) [s removeFromSuperview];
+        else KZRemoveEyes(s);
+    }
+}
+
+static void KZScan(UIView *v) {
+    Class cls = NSClassFromString(@"_SAUIProvidedViewContainerView");
+    if (cls && [v isKindOfClass:cls]) KZTryReplace(v);
+    for (UIView *s in [v.subviews copy]) KZScan(s);
+}
+
+static void KZReapply(void) {
+    if (gScheduled) [gScheduled removeAllObjects];
+    for (UIWindow *w in KZWindows()) {
+        KZRemoveEyes(w);
+        KZScan(w);
+    }
+    PLog(@"[reapply] 已重新应用");
+}
+
+static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const void *ob, CFDictionaryRef i) {
+    dispatch_async(dispatch_get_main_queue(), ^{ KZReapply(); });
+}
+
 %ctor {
-    PLog(@"ctor v1.5 (circle)");
+    PLog(@"ctor v1.6 (prefs)");
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
+                                    CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { KZTryInstall(); }];
     });
