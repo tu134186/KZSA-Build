@@ -112,30 +112,21 @@ static void KZTryReplace(UIView *container) {
     if (!container || !container.window) return;
     if (container.bounds.size.width < 4) return;
     if (!KZIsRecording(container)) return;
-    id cur = nil;
-    @try { cur = [container valueForKey:@"providedView"]; } @catch (...) {}
-    if ([cur isKindOfClass:[UIView class]] && [(UIView *)cur viewWithTag:0x4B5A]) return;
-    PLog(@"[replace] 命中 %.0fx%.0f", container.bounds.size.width, container.bounds.size.height);
-    UIView *eye = KZEye(container.bounds);
-    eye.tag = 0x4B5A;
-    if (origSetPV) origSetPV(container, @selector(setProvidedView:), eye);
 
-    // 屏幕真正显示的是 _portalView，它的 sourceView 也要指向新视图
-    Ivar pvIvar = class_getInstanceVariable([container class], "_portalView");
-    if (pvIvar) {
-        @try {
-            id portal = object_getIvar(container, pvIvar);
-            if (portal) {
-                SEL sel = NSSelectorFromString(@"setSourceView:");
-                if ([portal respondsToSelector:sel]) {
-                    typedef void (*Fn)(id, SEL, UIView *);
-                    Fn fn = (Fn)[portal methodForSelector:sel];
-                    if (fn) fn(portal, sel, eye);
-                    PLog(@"[portal] sourceView 已指向写轮眼");
-                }
-            }
-        } @catch (...) {}
-    }
+    id provided = nil;
+    @try { provided = [container valueForKey:@"providedView"]; } @catch (...) {}
+    if (![provided isKindOfClass:[UIView class]]) return;
+    UIView *pv = (UIView *)provided;
+    if ([pv viewWithTag:0x4B5A]) return;
+
+    UIView *eye = KZEye(pv.bounds);
+    eye.tag = 0x4B5A;
+    eye.frame = pv.bounds;
+    eye.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [pv addSubview:eye];
+    [pv bringSubviewToFront:eye];
+    PLog(@"[add] 已附加到 %@ %.0fx%.0f subviews=%lu", NSStringFromClass([pv class]),
+         pv.bounds.size.width, pv.bounds.size.height, (unsigned long)pv.subviews.count);
 }
 
 static NSMutableSet *gScheduled = nil;
@@ -174,7 +165,7 @@ static void KZTryInstall(void) {
 }
 
 %ctor {
-    PLog(@"ctor v1.3 (portal sourceView)");
+    PLog(@"ctor v1.4 (attach subview)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { KZTryInstall(); }];
     });
