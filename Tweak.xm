@@ -452,10 +452,37 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
     dispatch_async(dispatch_get_main_queue(), ^{ KZReapply(); });
 }
 
+static void KZDumpClasses(NSString *filter) {
+    int count = objc_getClassList(NULL, 0);
+    if (count <= 0) return;
+    Class *classes = (Class *)malloc(sizeof(Class) * count);
+    objc_getClassList(classes, count);
+    for (int i = 0; i < count; i++) {
+        const char *nm = class_getName(classes[i]);
+        if (!nm) continue;
+        NSString *name = [NSString stringWithUTF8String:nm];
+        if (![name containsString:filter]) continue;
+        unsigned int mc = 0;
+        Method *ms = class_copyMethodList(classes[i], &mc);
+        NSMutableString *line = [NSMutableString string];
+        for (unsigned k = 0; k < mc && k < 40; k++) {
+            [line appendFormat:@"%s ", sel_getName(method_getName(ms[k]))];
+        }
+        if (ms) free(ms);
+        PLog(@"[cls] %@ (%u methods) :: %@", name, mc, line);
+    }
+    free(classes);
+}
+
 %ctor {
-    PLog(@"ctor v1.15 (no duck, fallback)");
+    PLog(@"ctor v1.16 (api dump)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        KZDumpClasses(@"SAUISystemAperture");
+        KZDumpClasses(@"SAUIElement");
+        KZDumpClasses(@"_SAUIAssertion");
+    });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { KZTryInstall(); }];
     });
