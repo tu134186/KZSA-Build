@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key><string>com.minis.kzsa.prefs</string>
+	<key>CFBundleName</key><string>KZPrefs</string>
+	<key>CFBundleExecutable</key><string>KZPrefs</string>
+	<key>CFBundlePackageType</key><string>BNDL</string>
+	<key>CFBundleShortVersionString</key><string>1.6</string>
+	<key>CFBundleVersion</key><string>1.6</string>
+	<key>NSPrincipalClass</key><string>KZRootListController</string>
+	<key>NSPhotoLibraryUsageDescription</key><string>选择一张图片作为灵动岛写轮眼素材</string>
+</dict>
+</plist>
