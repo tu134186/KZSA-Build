@@ -28,7 +28,7 @@
 			<key>label</key><string>左侧大小</string>
 			<key>key</key><string>scale</string>
 			<key>default</key><string>1.0</string>
-			<key>min</key><real>0.6</real><key>max</key><real>1.2</real><key>step</key><real>0.01</real>
+			<key>min</key><real>0.4</real><key>max</key><real>2.0</real><key>step</key><real>0.01</real>
 			<key>height</key><integer>44</integer>
 		</dict>
 		<dict>
@@ -36,7 +36,7 @@
 			<key>label</key><string>右侧大小</string>
 			<key>key</key><string>scaleR</string>
 			<key>default</key><string>0.95</string>
-			<key>min</key><real>0.6</real><key>max</key><real>1.2</real><key>step</key><real>0.01</real>
+			<key>min</key><real>0.4</real><key>max</key><real>2.0</real><key>step</key><real>0.01</real>
 			<key>height</key><integer>44</integer>
 		</dict>
 		<dict>
