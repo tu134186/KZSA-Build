@@ -196,7 +196,7 @@ static void KZTryReplace(UIView *container) {
 }
 
 static NSMutableSet *gScheduled = nil;
-static void KZScheduleReplace(UIView *container) {
+static void __attribute__((unused)) KZScheduleReplace(UIView *container) {
     if (!container) return;
     if (!gScheduled) gScheduled = [NSMutableSet set];
     NSString *k = [NSString stringWithFormat:@"%p", container];
