@@ -59,7 +59,7 @@ static NSString *KZContext(UIView *v) {
 
 #import <objc/runtime.h>
 
-static BOOL gDumped = NO;
+static int gDumpCount = 0;
 
 static void KZDumpIvars(UIView *v, NSString *tag) {
     UIView *cur = v;
@@ -139,10 +139,20 @@ static void KZSetPV(id self, SEL _cmd, UIView *view) {
              view.frame.size.width, view.frame.size.height, ctx.length ? ctx : @"(空)");
     }
 
-    if (view && view.frame.size.height > 20 && !gDumped) {
-        gDumped = YES;
-        KZDumpIvars(container, @"pv");
-        KZDumpTree(view, @"pv", 0);
+    if (view && gDumpCount < 3) {
+        int idx = gDumpCount++;
+        PLog(@"[pv#%d] set: %@ %.1fx%.1f container=%.1fx%.1f", idx, NSStringFromClass([view class]),
+             view.frame.size.width, view.frame.size.height,
+             container.bounds.size.width, container.bounds.size.height);
+        KZDumpIvars(container, [NSString stringWithFormat:@"pv%d", idx]);
+        KZDumpTree(view, [NSString stringWithFormat:@"pv%d", idx], 0);
+        __weak UIView *wv = view;
+        __weak UIView *wc = container;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            PLog(@"[pv#%d] later: %@ %.1fx%.1f container=%.1fx%.1f", idx,
+                 NSStringFromClass([wv class]), wv.frame.size.width, wv.frame.size.height,
+                 wc.bounds.size.width, wc.bounds.size.height);
+        });
     }
     if (origSetPV) origSetPV(self, _cmd, view);
 }
