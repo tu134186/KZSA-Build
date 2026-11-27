@@ -41,7 +41,26 @@ static id kzInit(id self, SEL _cmd, id authority) {
     return r;
 }
 
+static void (*origWillLayout)(id, SEL);
+static void kzWillLayout(id self, SEL _cmd) {
+    if (!gManager) {
+        gManager = self;
+        PLog(@"[init] 从 hostWillPerformLayout 抓到: %@", NSStringFromClass([self class]));
+    }
+    @try { if (origWillLayout) origWillLayout(self, _cmd); } @catch (...) {}
+}
+
+static void (*origPromote)(id, SEL);
+static void kzPromote(id self, SEL _cmd) {
+    if (!gManager) {
+        gManager = self;
+        PLog(@"[init] 从 invalidatePromotedElements 抓到: %@", NSStringFromClass([self class]));
+    }
+    @try { if (origPromote) origPromote(self, _cmd); } @catch (...) {}
+}
+
 static BOOL gHooked = NO;
+static BOOL gHooked2 = NO;
 static void KZTryHook(void) {
     if (gHooked) return;
     Class c = NSClassFromString(@"SAUISystemApertureManager");
@@ -55,6 +74,16 @@ static void KZTryHook(void) {
     MSHookMessageEx(c, sel, (IMP)kzInit, (IMP *)&origInit);
     gHooked = YES;
     PLog(@"[hook] 已 hook initWithElementAuthority:");
+    if (!gHooked2) {
+        SEL s1 = NSSelectorFromString(@"hostWillPerformLayout");
+        SEL s2 = NSSelectorFromString(@"invalidatePromotedElements");
+        BOOL ok1 = [c instancesRespondToSelector:s1];
+        BOOL ok2 = [c instancesRespondToSelector:s2];
+        if (ok1) MSHookMessageEx(c, s1, (IMP)kzWillLayout, (IMP *)&origWillLayout);
+        if (ok2) MSHookMessageEx(c, s2, (IMP)kzPromote, (IMP *)&origPromote);
+        gHooked2 = YES;
+        PLog(@"[hook] hostWillPerformLayout:%d invalidatePromotedElements:%d", ok1, ok2);
+    }
 }
 
 // 定期把能力检查写一次（只读，不调用）
@@ -84,7 +113,7 @@ static void KZReport(void) {
 %end
 
 %ctor {
-    PLog(@"ctor v1.19 (capture manager)");
+    PLog(@"ctor v1.20 (capture via layout)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
