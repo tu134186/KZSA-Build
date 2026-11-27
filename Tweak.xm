@@ -107,17 +107,18 @@ static void KZProbeTick(void) {
 
 - (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
     BOOL r = %orig;
-    PLog(@"springboard launched, probe armed");
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
-            KZProbeTick();
-        }];
-    });
+    PLog(@"springboard launched (hook fired)");
     return r;
 }
 
 %end
 
 %ctor {
-    PLog(@"probe ctor (v0.1)");
+    PLog(@"probe ctor (v0.3)");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        PLog(@"timer started");
+        [NSTimer scheduledTimerWithTimeInterval:1.2 repeats:YES block:^(NSTimer *t) {
+            KZProbeTick();
+        }];
+    });
 }
