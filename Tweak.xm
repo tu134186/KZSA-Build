@@ -103,8 +103,8 @@ static void kzPromote(id self, SEL _cmd) {
 - (UIView *)expandedLeadingView { return [self kzMakeView]; }
 - (UIView *)expandedTrailingView { return nil; }
 
-- (NSInteger)preferredLayoutMode { PLog(@"[prov] preferredLayoutMode"); return 1; }
-- (NSInteger)maximumSupportedLayoutMode { PLog(@"[prov] maxLayoutMode"); return 2; }
+- (NSInteger)preferredLayoutMode { PLog(@"[prov] preferredLayoutMode"); return 2; }
+- (NSInteger)maximumSupportedLayoutMode { PLog(@"[prov] maxLayoutMode"); return 3; }
 - (NSInteger)minimumLayoutMode { return 0; }
 
 - (NSString *)clientIdentifier { return @"com.minis.kzsa"; }
