@@ -177,7 +177,7 @@ static void KZTryReplace(UIView *container) {
     if (!narrow && !KZPrefBool(@"rightOn", YES)) return;
     gUseDuck = !narrow;
     PLog(@"[slot] %.0fx%.0f -> %@", b.size.width, b.size.height, narrow ? @"写轮眼" : @"小鸭子");
-    CGFloat side = MIN(b.size.width, b.size.height);
+    CGFloat side = MAX(b.size.width, b.size.height);
     if (side < 4) side = 22;
     double scale = narrow ? KZPrefDouble(@"scale", 1.0) : KZPrefDouble(@"scaleR", 0.95);
     if (scale < 0.3) scale = 1.0;
@@ -386,7 +386,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.11 (prefs panel)");
+    PLog(@"ctor v1.12 (labels + bigger)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
