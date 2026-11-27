@@ -247,7 +247,7 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
 
 - (void)respring {
     pid_t pid = 0;
-    char *argv[] = { "/usr/bin/killall", "-9", "SpringBoard", NULL };
+    char *argv[] = { (char *)"/usr/bin/killall", (char *)"-9", (char *)"SpringBoard", NULL };
     posix_spawn(&pid, "/usr/bin/killall", NULL, NULL, argv, environ);
 }
 
