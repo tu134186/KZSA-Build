@@ -297,7 +297,7 @@ static UIView *KZSharinganView(void) {
 }
 
 static UIView *gDuckView = nil;
-static UIView *KZDuckView(void) {
+static UIView * __attribute__((unused)) KZDuckView(void) {
     if (gDuckView) return gDuckView;
     UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
     v.backgroundColor = [UIColor clearColor];
@@ -323,7 +323,7 @@ static UIView *KZDuckView(void) {
 
 static NSMutableSet *gTrailSeen = nil;
 
-static void KZTrailLog(NSString *name) {
+static void __attribute__((unused)) KZTrailLog(NSString *name) {
     if (!gTrailSeen) gTrailSeen = [NSMutableSet set];
     if ([gTrailSeen containsObject:name]) return;
     [gTrailSeen addObject:name];
