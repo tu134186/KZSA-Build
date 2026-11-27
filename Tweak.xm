@@ -10,6 +10,8 @@
 #define KZ_DOMAIN "com.minis.kzprobe"
 #define KZ_PREF_DOMAIN "com.minis.kzsa"
 #define KZ_NOTIFY "com.minis.kzsa.changed"
+
+static BOOL gLeadMissing = NO;
 #define KZ_EYE @"/Library/KZTheme/eye/tomoe2.png"
 #define KZ_EYE_ALT @"/Library/KZTheme/eye/tomoe.png"
 
@@ -159,8 +161,6 @@ static void KZSetPV(id self, SEL _cmd, UIView *view) {
     if (origSetPV) origSetPV(self, _cmd, view);
     if (gLeadMissing) KZScheduleReplace((UIView *)self);
 }
-
-static BOOL gLeadMissing = NO;
 
 static void KZTryReplace(UIView *container) {
     if (!gLeadMissing) return;
