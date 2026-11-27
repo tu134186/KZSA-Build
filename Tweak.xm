@@ -86,7 +86,7 @@ static void KZDumpTree(UIView *v, NSString *tag, int depth) {
 }
 
 static UIView *gEye = nil;
-static UIView *KZEye(CGRect frame) {
+static UIView * __attribute__((unused)) KZEye(CGRect frame) {
     if (gEye) return gEye;
     UIView *v = [[UIView alloc] initWithFrame:frame];
     v.backgroundColor = [UIColor blackColor];
