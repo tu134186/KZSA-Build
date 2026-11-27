@@ -49,14 +49,8 @@ static NSString *KZElementId(UIView *v) {
     return nil;
 }
 
-static UIView *gEye = nil;
 static UIView *KZEye(CGRect frame) {
     if (frame.size.width < 4) frame = CGRectMake(0, 0, 22, 22);
-    if (gEye) {
-        gEye.frame = frame;
-        gEye.layer.cornerRadius = frame.size.width / 2.0;
-        return gEye;
-    }
     UIView *v = [[UIView alloc] initWithFrame:frame];
     v.backgroundColor = [UIColor blackColor];
     v.layer.cornerRadius = frame.size.width / 2.0;
@@ -73,7 +67,6 @@ static UIView *KZEye(CGRect frame) {
     if (!img) img = [UIImage imageWithContentsOfFile:KZ_EYE_ALT];
     if (!img) {
         PLog(@"[img] 读不到素材");
-        gEye = v;
         return v;
     }
     UIImageView *iv = [[UIImageView alloc] initWithImage:img];
@@ -97,9 +90,10 @@ static UIView *KZEye(CGRect frame) {
     breathe.repeatCount = INFINITY;
     [v.layer addAnimation:breathe forKey:@"kzbreathe"];
 
-    gEye = v;
     return v;
 }
+
+static void (*origSetPV)(id, SEL, UIView *) = NULL;
 
 static BOOL KZIsRecording(UIView *container) {
     NSString *eid = KZElementId(container);
@@ -107,37 +101,35 @@ static BOOL KZIsRecording(UIView *container) {
     return [eid.lowercaseString containsString:@"screenrecording"];
 }
 
-static void (*origSetPV)(id, SEL, UIView *) = NULL;
 static void KZSetPV(id self, SEL _cmd, UIView *view) {
-    UIView *container = (UIView *)self;
-    if (KZIsRecording(container) && container.bounds.size.width >= 4) {
-        if (!gLogged) gLogged = [NSMutableSet set];
-        NSString *k = [NSString stringWithFormat:@"pv-%p", container];
-        if (![gLogged containsObject:k]) {
-            [gLogged addObject:k];
-            PLog(@"[replace] setPV 命中 (%.0fx%.0f)", container.bounds.size.width, container.bounds.size.height);
-        }
-        if (origSetPV) origSetPV(self, _cmd, KZEye(container.bounds));
-        return;
-    }
     if (origSetPV) origSetPV(self, _cmd, view);
+    KZScheduleReplace((UIView *)self);
+}
+
+static void KZTryReplace(UIView *container) {
+    if (!container || !container.window) return;
+    if (container.bounds.size.width < 4) return;
+    if (!KZIsRecording(container)) return;
+    id cur = nil;
+    @try { cur = [container valueForKey:@"providedView"]; } @catch (...) {}
+    if ([cur isKindOfClass:[UIView class]] && [(UIView *)cur viewWithTag:0x4B5A]) return;
+    PLog(@"[replace] 命中 %.0fx%.0f", container.bounds.size.width, container.bounds.size.height);
+    UIView *eye = KZEye(container.bounds);
+    eye.tag = 0x4B5A;
+    if (origSetPV) origSetPV(container, @selector(setProvidedView:), eye);
+}
+
+static void KZScheduleReplace(UIView *container) {
+    __weak UIView *wc = container;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        KZTryReplace(wc);
+    });
 }
 
 static void (*origDidMove)(id, SEL);
 static void KZDidMove(id self, SEL _cmd) {
     if (origDidMove) origDidMove(self, _cmd);
-    UIView *container = (UIView *)self;
-    if (!container.window) return;
-    if (!KZIsRecording(container)) return;
-    if (container.bounds.size.width < 4) return;
-
-    if (!gLogged) gLogged = [NSMutableSet set];
-    NSString *k = [NSString stringWithFormat:@"dm-%p", container];
-    if (![gLogged containsObject:k]) {
-        [gLogged addObject:k];
-        PLog(@"[replace] didMove 命中 (%.0fx%.0f)", container.bounds.size.width, container.bounds.size.height);
-    }
-    if (origSetPV) origSetPV(self, @selector(setProvidedView:), KZEye(container.bounds));
+    KZScheduleReplace((UIView *)self);
 }
 
 static BOOL gH1 = NO, gH2 = NO;
@@ -157,7 +149,7 @@ static void KZTryInstall(void) {
 }
 
 %ctor {
-    PLog(@"ctor v1.1 (embedded eye)");
+    PLog(@"ctor v1.2 (delayed replace)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { KZTryInstall(); }];
     });
