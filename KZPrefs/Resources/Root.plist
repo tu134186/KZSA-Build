@@ -5,72 +5,59 @@
 	<key>title</key><string>写轮眼</string>
 	<key>items</key>
 	<array>
+		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>基本设置</string></dict>
+		<dict><key>cell</key><string>PSSwitchCell</string><key>key</key><string>enabled</string><key>label</key><string>启用主题</string><key>default</key><true/><key>defaults</key><string>com.minis.kzsa</string></dict>
+		<dict><key>cell</key><string>PSStaticTextCell</string><key>key</key><string>eyeName</string><key>label</key><string>当前：内置写轮眼</string></dict>
+		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>选择素材</string><key>action</key><string>importPhoto</string></dict>
+		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>打开目录</string><key>action</key><string>openFolder</string></dict>
+		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>注销生效</string><key>action</key><string>respring</string></dict>
+
+		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>动画</string></dict>
+		<dict><key>cell</key><string>PSSwitchCell</string><key>key</key><string>leftOn</string><key>label</key><string>左侧动画</string><key>default</key><true/><key>defaults</key><string>com.minis.kzsa</string></dict>
+		<dict><key>cell</key><string>PSSwitchCell</string><key>key</key><string>rightOn</string><key>label</key><string>右侧动画</string><key>default</key><true/><key>defaults</key><string>com.minis.kzsa</string></dict>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>素材</string>
-			<key>footerText</key><string>导入的图片会裁成正方形、缩到 320×320 存进设置里。</string>
-		</dict>
-		<dict>
-			<key>cell</key><string>PSStaticTextCell</string>
-			<key>key</key><string>eyeName</string>
-			<key>label</key><string>当前素材：内置写轮眼</string>
-		</dict>
-		<dict>
-			<key>cell</key><string>PSButtonCell</string>
-			<key>label</key><string>从相册导入图片…</string>
-			<key>action</key><string>importPhoto</string>
-		</dict>
-		<dict>
-			<key>cell</key><string>PSButtonCell</string>
-			<key>label</key><string>从文件导入 PNG…</string>
-			<key>action</key><string>importFile</string>
-		</dict>
-		<dict>
-			<key>cell</key><string>PSButtonCell</string>
-			<key>label</key><string>恢复内置写轮眼</string>
-			<key>action</key><string>resetEye</string>
-		</dict>
-		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>转速</string>
-			<key>footerText</key><string>秒/圈。越小转得越快，1.5 是默认。</string>
-		</dict>
-		<dict>
-			<key>cell</key><string>PSSliderCell</string>
+			<key>cell</key><string>PSTableCell</string>
+			<key>label</key><string>动画速度</string>
 			<key>key</key><string>duration</string>
-			<key>label</key><string>转速 duration</string>
 			<key>default</key><string>1.5</string>
-			<key>min</key><real>0.2</real>
-			<key>max</key><real>5.0</real>
-			<key>isContinuous</key><true/>
-			<key>showValue</key><true/>
-			<key>defaults</key><string>com.minis.kzsa</string>
+			<key>min</key><real>0.2</real><key>max</key><real>5.0</real><key>step</key><real>0.05</real>
+			<key>height</key><integer>44</integer>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>label</key><string>大小</string>
-			<key>footerText</key><string>1.00 = 正好填满那个圆，0.8 会小一圈。</string>
-		</dict>
-		<dict>
-			<key>cell</key><string>PSSliderCell</string>
+			<key>cell</key><string>PSTableCell</string>
+			<key>label</key><string>左侧大小</string>
 			<key>key</key><string>scale</string>
-			<key>label</key><string>大小 scale</string>
 			<key>default</key><string>1.0</string>
-			<key>min</key><real>0.6</real>
-			<key>max</key><real>1.2</real>
-			<key>isContinuous</key><true/>
-			<key>showValue</key><true/>
-			<key>defaults</key><string>com.minis.kzsa</string>
+			<key>min</key><real>0.6</real><key>max</key><real>1.2</real><key>step</key><real>0.01</real>
+			<key>height</key><integer>44</integer>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSGroupCell</string>
-			<key>footerText</key><string>改完立即生效；如果没变，点下面的按钮，或重新开始一次录屏。</string>
+			<key>cell</key><string>PSTableCell</string>
+			<key>label</key><string>右侧大小</string>
+			<key>key</key><string>scaleR</string>
+			<key>default</key><string>0.95</string>
+			<key>min</key><real>0.6</real><key>max</key><real>1.2</real><key>step</key><real>0.01</real>
+			<key>height</key><integer>44</integer>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSButtonCell</string>
-			<key>label</key><string>立即应用</string>
-			<key>action</key><string>applyNow</string>
+			<key>cell</key><string>PSTableCell</string>
+			<key>label</key><string>左侧偏移</string>
+			<key>key</key><string>offX</string>
+			<key>default</key><string>0.0</string>
+			<key>min</key><real>-6</real><key>max</key><real>6</real><key>step</key><real>0.1</real>
+			<key>height</key><integer>44</integer>
 		</dict>
+		<dict>
+			<key>cell</key><string>PSTableCell</string>
+			<key>label</key><string>右侧偏移</string>
+			<key>key</key><string>offXR</string>
+			<key>default</key><string>0.0</string>
+			<key>min</key><real>-6</real><key>max</key><real>6</real><key>step</key><real>0.1</real>
+			<key>height</key><integer>44</integer>
+		</dict>
+
+		<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>素材自动裁成正方形；改完立即生效。</string></dict>
+		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>恢复默认</string><key>action</key><string>resetAll</string></dict>
 	</array>
 </dict>
 </plist>
