@@ -134,6 +134,20 @@ static void KZRegisterOnce(void) {
         id a = ((id (*)(id, SEL, id))objc_msgSend)(gManager, as, gProvider);
         gAssertion = a;
         PLog(@"[reg] assertion = %@", a ? NSStringFromClass([a class]) : @"nil");
+            SEL setL = NSSelectorFromString(@"setLayoutMode:reason:forTargetWithOverrider:");
+            if ([gManager respondsToSelector:setL]) {
+                @try {
+                    ((void(*)(id,SEL,long,long,id))objc_msgSend)(gManager, setL, 2, 0, gProvider);
+                    PLog(@"[reg] setLayoutMode:2 已调用");
+                } @catch (NSException *e) { PLog(@"[reg] setLayoutMode 异常: %@", e.reason); }
+            } else {
+                PLog(@"[reg] setLayoutMode 不存在");
+            }
+            SEL inval = NSSelectorFromString(@"invalidatePromotedElements");
+            if ([gManager respondsToSelector:inval]) {
+                @try { ((void(*)(id,SEL))objc_msgSend)(gManager, inval); PLog(@"[reg] invalidate 已调用"); }
+                @catch (NSException *e) { PLog(@"[reg] invalidate 异常"); }
+            }
     } @catch (NSException *e) {
         PLog(@"[reg] 异常: %@", e.reason);
     }
@@ -193,7 +207,7 @@ static void KZReport(void) {
 %end
 
 %ctor {
-    PLog(@"ctor v1.21 (register element)");
+    PLog(@"ctor v1.24 (register element)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
