@@ -4,11 +4,18 @@
 <dict>
 	<key>entry</key>
 	<dict>
-		<key>cell</key><string>PSLinkCell</string>
-		<key>bundle</key><string>KZPrefs</string>
-		<key>detail</key><string>KZRootListController</string>
-		<key>isController</key><true/>
-		<key>label</key><string>写轮眼</string>
+		<key>bundle</key>
+		<string>KZPrefs</string>
+		<key>cell</key>
+		<string>PSLinkCell</string>
+		<key>detail</key>
+		<string>KZRootListController</string>
+		<key>icon</key>
+		<string>icon.png</string>
+		<key>isController</key>
+		<true/>
+		<key>label</key>
+		<string>写轮眼</string>
 	</dict>
 </dict>
 </plist>
