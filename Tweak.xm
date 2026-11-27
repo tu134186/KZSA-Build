@@ -67,16 +67,6 @@ static void kzPromote(id self, SEL _cmd) {
 
 @interface KZElementProvider : NSObject
 
-- (NSString *)clientIdentifier { return @"com.minis.kzsa"; }
-- (NSString *)elementIdentifier { return @"KZSharinganElement"; }
-// 兜底：未实现的选择器返回 nil / 0，避免 unrecognized selector
-- (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
-    return [NSMethodSignature signatureWithObjCTypes:"@@:"];
-}
-- (void)forwardInvocation:(NSInvocation *)inv {
-    NSUInteger len = [[inv methodSignature] methodReturnLength];
-    if (len > 0) { void *buf = calloc(1, len); [inv setReturnValue:buf]; free(buf); }
-}
 @end
 
 @implementation KZElementProvider
@@ -117,6 +107,15 @@ static void kzPromote(id self, SEL _cmd) {
 - (NSInteger)maximumSupportedLayoutMode { PLog(@"[prov] maxLayoutMode"); return 2; }
 - (NSInteger)minimumLayoutMode { return 0; }
 
+- (NSString *)clientIdentifier { return @"com.minis.kzsa"; }
+
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
+    return [NSMethodSignature signatureWithObjCTypes:"@@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)inv {
+    NSUInteger len = [[inv methodSignature] methodReturnLength];
+    if (len > 0) { void *buf = calloc(1, len); [inv setReturnValue:buf]; free(buf); }
+}
 @end
 
 static id gProvider = nil;
