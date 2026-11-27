@@ -1,9 +1,12 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
 #import <stdarg.h>
 
 #define KZ_LOG @"/var/mobile/KZprobe.log"
 #define KZ_DOMAIN "com.minis.kzprobe"
+#define KZ_EYE @"/Library/KZTheme/eye/tomoe2.png"
+#define KZ_EYE_ALT @"/Library/KZTheme/eye/tomoe.png"
 
 static NSMutableString *gDump = nil;
 static void KZFlush(void) {
@@ -17,108 +20,116 @@ static void PLog(NSString *fmt, ...) {
     va_list ap; va_start(ap, fmt);
     NSString *body = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
-    NSDateFormatter *df = [[NSDateFormatter alloc] init];
-    df.dateFormat = @"HH:mm:ss.SSS";
-    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [df stringFromDate:[NSDate date]], body];
+    NSString *line = [NSString stringWithFormat:@"%@\n", body];
     if (gDump.length < 60000) [gDump appendString:line];
     KZFlush();
 }
 
-static NSString *KZChain(UIView *v) {
-    NSMutableArray *parts = [NSMutableArray array];
-    UIView *cur = v;
-    int n = 0;
-    while (cur && n < 9) {
-        [parts addObject:[NSString stringWithFormat:@"%@(%.1f,%.1f %.1fx%.1f)",
-                          NSStringFromClass([cur class]),
-                          cur.frame.origin.x, cur.frame.origin.y,
-                          cur.frame.size.width, cur.frame.size.height]];
-        cur = cur.superview;
-        n++;
-    }
-    return [parts componentsJoinedByString:@" < "];
-}
+static NSMutableSet *gSeenCtx = nil;
+static NSMutableSet *gReplaced = nil;
 
-static NSString *KZIdOf(UIView *v) {
-    NSArray *keys = @[ @"elementIdentifier", @"identifier", @"accessoryIdentifier" ];
-    for (NSString *k in keys) {
-        @try {
-            id val = [v valueForKey:k];
-            if ([val isKindOfClass:[NSString class]] && [(NSString *)val length]) return val;
-        } @catch (...) {}
-    }
-    return @"-";
-}
-
-static NSArray<UIWindow *> *KZWindows(void) {
+// 沿父视图往上找 element 的标识信息
+static NSString *KZContext(UIView *v) {
     NSMutableArray *out = [NSMutableArray array];
-    for (UIScene *sc in [[UIApplication sharedApplication] connectedScenes]) {
-        if ([sc isKindOfClass:[UIWindowScene class]]) {
-            [out addObjectsFromArray:((UIWindowScene *)sc).windows];
-        }
-    }
-    return out;
-}
-
-static void KZDump(NSString *tag) {
-    static NSMutableSet *seen = nil;
-    if (!seen) seen = [NSMutableSet set];
-
-    NSArray *windows = KZWindows();
-    int found = 0;
-    for (UIWindow *w in windows) {
-        NSMutableArray *stack = [NSMutableArray arrayWithObject:w];
-        while (stack.count) {
-            UIView *v = [stack lastObject];
-            [stack removeLastObject];
-            NSString *cn = NSStringFromClass([v class]);
-
-            BOOL hit = [cn containsString:@"ProvidedViewContainer"] ||
-                       [cn containsString:@"SceneElementAccessory"] ||
-                       [cn containsString:@"AccessoryPortal"];
-            if (hit) {
-                CGRect r = [v convertRect:v.bounds toView:nil];
-                NSString *sig = [NSString stringWithFormat:@"%@|%@|%@", cn, KZIdOf(v), NSStringFromCGRect(r)];
-                if (![seen containsObject:sig]) {
-                    [seen addObject:sig];
-                    id pv = nil;
-                    @try { pv = [v valueForKey:@"providedView"]; } @catch (...) {}
-                    NSString *pvDesc = pv ? [NSString stringWithFormat:@"%@ %.1fx%.1f",
-                                             NSStringFromClass([pv class]),
-                                             [pv isKindOfClass:[UIView class]] ? ((UIView *)pv).frame.size.width : 0.0,
-                                             [pv isKindOfClass:[UIView class]] ? ((UIView *)pv).frame.size.height : 0.0]
-                                          : @"nil";
-                    PLog(@"[%@] %@ id=%@ screen=%@ provided=%@", tag, cn, KZIdOf(v), NSStringFromCGRect(r), pvDesc);
-                    PLog(@"      chain: %@", KZChain(v));
-                    found++;
+    NSArray *keys = @[ @"elementIdentifier", @"identifier", @"bundleIdentifier",
+                       @"sceneIdentifier", @"element", @"sceneElement", @"dataSource" ];
+    UIView *cur = v;
+    int depth = 0;
+    while (cur && depth < 14) {
+        for (NSString *k in keys) {
+            @try {
+                id val = [cur valueForKey:k];
+                if (!val) continue;
+                NSString *desc;
+                if ([val isKindOfClass:[NSString class]]) {
+                    desc = (NSString *)val;
+                } else {
+                    desc = [NSString stringWithFormat:@"%@", val];
+                    if ([val respondsToSelector:@selector(elementIdentifier)]) {
+                        @try {
+                            id inner = [val valueForKey:@"elementIdentifier"];
+                            if (inner) desc = [desc stringByAppendingFormat:@" elemId=%@", inner];
+                        } @catch (...) {}
+                    }
                 }
-            }
-            for (UIView *s in v.subviews) [stack addObject:s];
+                if (desc.length && [desc length] < 300) {
+                    [out addObject:[NSString stringWithFormat:@"%@.%@=%@", NSStringFromClass([cur class]), k, desc]];
+                }
+            } @catch (...) {}
         }
+        cur = cur.superview;
+        depth++;
     }
-    if (found) PLog(@"--- 本次新增 %d 条 ---", found);
+    return [out componentsJoinedByString:@" | "];
 }
 
-static void KZProbeTick(void) {
-    KZDump(@"tick");
+static UIView *gEyeView = nil;
+static UIView *KZEyeView(void) {
+    if (gEyeView) return gEyeView;
+
+    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
+    v.backgroundColor = [UIColor blackColor];
+    v.layer.cornerRadius = 11.0;
+    v.layer.masksToBounds = YES;
+
+    UIImage *img = [UIImage imageWithContentsOfFile:KZ_EYE];
+    if (!img) img = [UIImage imageWithContentsOfFile:KZ_EYE_ALT];
+    if (img) {
+        UIImageView *iv = [[UIImageView alloc] initWithImage:img];
+        iv.frame = v.bounds;
+        iv.contentMode = UIViewContentModeScaleAspectFill;
+        iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [v addSubview:iv];
+
+        CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+        spin.fromValue = @(0.0);
+        spin.toValue = @(M_PI * 2.0);
+        spin.duration = 1.5;
+        spin.repeatCount = INFINITY;
+        [iv.layer addAnimation:spin forKey:@"kzspin"];
+
+        CABasicAnimation *breathe = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+        breathe.fromValue = @(1.0);
+        breathe.toValue = @(1.06);
+        breathe.duration = 1.1;
+        breathe.autoreverses = YES;
+        breathe.repeatCount = INFINITY;
+        [v.layer addAnimation:breathe forKey:@"kzbreathe"];
+    } else {
+        PLog(@"[img] 读不到 %@", KZ_EYE);
+    }
+    gEyeView = v;
+    return v;
 }
 
-%hook SpringBoard
+%hook _SAUIProvidedViewContainerView
 
-- (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
-    BOOL r = %orig;
-    PLog(@"springboard launched (hook fired)");
-    return r;
+- (void)setProvidedView:(UIView *)view {
+    NSString *ctx = KZContext(self);
+    NSString *key = [NSString stringWithFormat:@"%p|%@|%@", self, NSStringFromClass([view class]), ctx];
+    if (!gSeenCtx) gSeenCtx = [NSMutableSet set];
+    if (ctx.length && ![gSeenCtx containsObject:key]) {
+        [gSeenCtx addObject:key];
+        PLog(@"[setPV] so=%@ provided=%@ %.1fx%.1f ctx=%@",
+             NSStringFromClass([self class]), NSStringFromClass([view class]),
+             view.frame.size.width, view.frame.size.height, ctx);
+    }
+    NSString *low = ctx.lowercaseString;
+    if (view && ([low containsString:@"recording"] || [low containsString:@"replay"])) {
+        if (!gReplaced) gReplaced = [NSMutableSet set];
+        NSString *tag = [NSString stringWithFormat:@"%p", self];
+        if (![gReplaced containsObject:tag]) {
+            [gReplaced addObject:tag];
+            PLog(@"[replace] 命中屏幕录制 element，换入写轮眼视图");
+        }
+        %orig(KZEyeView());
+        return;
+    }
+    %orig(view);
 }
 
 %end
 
 %ctor {
-    PLog(@"probe ctor (v0.3)");
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        PLog(@"timer started");
-        [NSTimer scheduledTimerWithTimeInterval:1.2 repeats:YES block:^(NSTimer *t) {
-            KZProbeTick();
-        }];
-    });
+    PLog(@"ctor v0.4 (eye replace)");
 }
