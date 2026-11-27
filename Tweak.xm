@@ -157,10 +157,11 @@ static void KZScheduleReplace(UIView *container);
 
 static void KZSetPV(id self, SEL _cmd, UIView *view) {
     if (origSetPV) origSetPV(self, _cmd, view);
-    KZScheduleReplace((UIView *)self);
 }
 
 static void KZTryReplace(UIView *container) {
+    return;   // v1.13：全部改为“提供给系统”，不再贴子视图
+
     if (!container || !container.window) return;
     if (container.bounds.size.width < 4) return;
     if (!KZIsRecording(container)) return;
@@ -210,7 +211,7 @@ static void KZScheduleReplace(UIView *container) {
 static void (*origDidMove)(id, SEL);
 static void KZDidMove(id self, SEL _cmd) {
     if (origDidMove) origDidMove(self, _cmd);
-    KZScheduleReplace((UIView *)self);
+
 }
 
 // —— 布局模式：让录屏 element 请求更宽的布局
@@ -252,6 +253,46 @@ static NSInteger myMinMode(id self, SEL _cmd) {
 }
 
 // —— 给录屏 element 提供 trailing 视图（小鸭子），让系统加宽并给第二个位置
+static UIView *KZSharinganView(void) {
+    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
+    v.backgroundColor = [UIColor clearColor];
+    v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    double scale = KZPrefDouble(@"scale", 1.0);
+    if (scale < 0.3) scale = 1.0;
+    double offx = KZPrefDouble(@"offX", 0.0);
+    CGFloat side = 22.0 * scale;
+    UIView *circle = [[UIView alloc] initWithFrame:CGRectMake((22 - side) / 2.0 + offx, 0, side, side)];
+    circle.backgroundColor = [UIColor blackColor];
+    circle.layer.cornerRadius = side / 2.0;
+    circle.layer.masksToBounds = YES;
+    circle.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin |
+                              UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+
+    UIImage *img = KZUserImage();
+    if (!img) img = [UIImage imageWithContentsOfFile:KZ_EYE];
+    if (!img) {
+        NSData *d = [[NSData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:kKZeyeB64]
+                                                        options:NSDataBase64DecodingIgnoreUnknownCharacters];
+        if (d.length > 200) img = [UIImage imageWithData:d];
+    }
+    if (img) {
+        UIImageView *iv = [[UIImageView alloc] initWithImage:img];
+        CGFloat pad = circle.bounds.size.width * 0.032;
+        iv.frame = CGRectInset(circle.bounds, -pad, -pad);
+        iv.contentMode = UIViewContentModeScaleAspectFill;
+        iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [circle addSubview:iv];
+        CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+        spin.fromValue = @(0.0);
+        spin.toValue = @(M_PI * 2.0);
+        spin.duration = KZPrefDouble(@"duration", 1.5);
+        spin.repeatCount = INFINITY;
+        [iv.layer addAnimation:spin forKey:@"kzspin"];
+    }
+    [v addSubview:circle];
+    return v;
+}
+
 static UIView *gDuckView = nil;
 static UIView *KZDuckView(void) {
     if (gDuckView) return gDuckView;
@@ -286,6 +327,31 @@ static void KZTrailLog(NSString *name) {
     PLog(@"[trail] 提供鸭子 via %@", name);
 }
 
+static UIView *(*origLeadView)(id, SEL);
+static UIView *myLeadView(id self, SEL _cmd) {
+    UIView *orig = origLeadView ? origLeadView(self, _cmd) : nil;
+    NSString *eid = KZElemId(self);
+    if ([eid.lowercaseString containsString:@"screenrecording"] && KZPrefBool(@"leftOn", YES)) {
+        if (!gTrailSeen) gTrailSeen = [NSMutableSet set];
+        if (![gTrailSeen containsObject:@"leading"]) {
+            [gTrailSeen addObject:@"leading"];
+            PLog(@"[lead] 提供写轮眼 via leadingView");
+        }
+        return KZSharinganView();
+    }
+    return orig;
+}
+
+static UIView *(*origExpLeadView)(id, SEL);
+static UIView *myExpLeadView(id self, SEL _cmd) {
+    UIView *orig = origExpLeadView ? origExpLeadView(self, _cmd) : nil;
+    NSString *eid = KZElemId(self);
+    if ([eid.lowercaseString containsString:@"screenrecording"] && KZPrefBool(@"leftOn", YES)) {
+        return KZSharinganView();
+    }
+    return orig;
+}
+
 static UIView *(*origTrailView)(id, SEL);
 static UIView *myTrailView(id self, SEL _cmd) {
     UIView *orig = origTrailView ? origTrailView(self, _cmd) : nil;
@@ -308,7 +374,7 @@ static UIView *myExpTrailView(id self, SEL _cmd) {
     return orig;
 }
 
-static BOOL gH1 = NO, gH2 = NO, gH3 = NO, gH4 = NO;
+static BOOL gH1 = NO, gH2 = NO, gH3 = NO, gH4 = NO, gH5 = NO;
 static void KZInstallModeHooks(void) {
     Class c = NSClassFromString(@"SBSystemApertureSceneElement");
     if (!c) return;
@@ -330,6 +396,15 @@ static void KZInstallModeHooks(void) {
         if ([c instancesRespondToSelector:s2]) { MSHookMessageEx(c, s2, (IMP)myExpTrailView, (IMP *)&origExpTrailView); n++; }
         gH4 = YES;
         PLog(@"[trail] hooks installed on %d selectors", n);
+    }
+    if (!gH5) {
+        SEL l1 = NSSelectorFromString(@"leadingView");
+        SEL l2 = NSSelectorFromString(@"expandedLeadingView");
+        int m = 0;
+        if ([c instancesRespondToSelector:l1]) { MSHookMessageEx(c, l1, (IMP)myLeadView, (IMP *)&origLeadView); m++; }
+        if ([c instancesRespondToSelector:l2]) { MSHookMessageEx(c, l2, (IMP)myExpLeadView, (IMP *)&origExpLeadView); m++; }
+        gH5 = YES;
+        PLog(@"[lead] hooks installed on %d selectors", m);
     }
 }
 
@@ -386,7 +461,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.12 (labels + bigger)");
+    PLog(@"ctor v1.13 (all provided views)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
