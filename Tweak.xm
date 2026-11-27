@@ -23,6 +23,7 @@ static void PLog(NSString *fmt, ...) {
 }
 
 static id gManager = nil;
+static void KZRegisterOnce(void);
 
 // 只在 manager 被创建时抓实例，不做任何遍历
 static id (*origInit)(id, SEL, id);
