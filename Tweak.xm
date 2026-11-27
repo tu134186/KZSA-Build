@@ -46,6 +46,7 @@ static void kzWillLayout(id self, SEL _cmd) {
     if (!gManager) {
         gManager = self;
         PLog(@"[init] 从 hostWillPerformLayout 抓到: %@", NSStringFromClass([self class]));
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZRegisterOnce(); });
     }
     @try { if (origWillLayout) origWillLayout(self, _cmd); } @catch (...) {}
 }
@@ -55,8 +56,76 @@ static void kzPromote(id self, SEL _cmd) {
     if (!gManager) {
         gManager = self;
         PLog(@"[init] 从 invalidatePromotedElements 抓到: %@", NSStringFromClass([self class]));
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZRegisterOnce(); });
     }
     @try { if (origPromote) origPromote(self, _cmd); } @catch (...) {}
+}
+
+
+#pragma mark - element provider
+
+@interface KZElementProvider : NSObject
+@end
+
+@implementation KZElementProvider
+
+- (NSString *)elementIdentifier { return @"KZSharinganElement"; }
+- (NSString *)identifier { return @"KZSharinganElement"; }
+- (NSString *)description { return @"KZSharinganElement"; }
+
+- (UIView *)kzMakeView {
+    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
+    v.backgroundColor = [UIColor blackColor];
+    v.layer.cornerRadius = 11.0;
+    v.layer.masksToBounds = YES;
+    UIImage *img = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe2.png"];
+    if (!img) img = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe.png"];
+    if (img) {
+        UIImageView *iv = [[UIImageView alloc] initWithImage:img];
+        iv.frame = v.bounds;
+        iv.contentMode = UIViewContentModeScaleAspectFill;
+        [v addSubview:iv];
+        CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+        spin.fromValue = @(0.0);
+        spin.toValue = @(M_PI * 2.0);
+        spin.duration = 1.5;
+        spin.repeatCount = INFINITY;
+        [iv.layer addAnimation:spin forKey:@"kzspin"];
+    }
+    return v;
+}
+
+- (UIView *)leadingView { PLog(@"[prov] leadingView"); return [self kzMakeView]; }
+- (UIView *)trailingView { return nil; }
+- (UIView *)minimalView { PLog(@"[prov] minimalView"); return [self kzMakeView]; }
+- (UIView *)expandedLeadingView { return [self kzMakeView]; }
+- (UIView *)expandedTrailingView { return nil; }
+
+- (NSInteger)preferredLayoutMode { PLog(@"[prov] preferredLayoutMode"); return 1; }
+- (NSInteger)maximumSupportedLayoutMode { PLog(@"[prov] maxLayoutMode"); return 2; }
+- (NSInteger)minimumLayoutMode { return 0; }
+
+@end
+
+static id gProvider = nil;
+static id gAssertion = nil;
+
+static void KZRegisterOnce(void) {
+    static BOOL done = NO;
+    if (done || !gManager) return;
+    done = YES;
+    @try {
+        gProvider = [[KZElementProvider alloc] init];
+        SEL reg = NSSelectorFromString(@"registerElement:");
+        ((void (*)(id, SEL, id))objc_msgSend)(gManager, reg, gProvider);
+        PLog(@"[reg] registerElement 完成");
+        SEL as = NSSelectorFromString(@"_assertionForElementCreatingIfNecessary:");
+        id a = ((id (*)(id, SEL, id))objc_msgSend)(gManager, as, gProvider);
+        gAssertion = a;
+        PLog(@"[reg] assertion = %@", a ? NSStringFromClass([a class]) : @"nil");
+    } @catch (NSException *e) {
+        PLog(@"[reg] 异常: %@", e.reason);
+    }
 }
 
 static BOOL gHooked = NO;
@@ -113,7 +182,7 @@ static void KZReport(void) {
 %end
 
 %ctor {
-    PLog(@"ctor v1.20 (capture via layout)");
+    PLog(@"ctor v1.21 (register element)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
