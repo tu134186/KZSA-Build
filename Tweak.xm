@@ -157,10 +157,11 @@ static void KZScheduleReplace(UIView *container);
 
 static void KZSetPV(id self, SEL _cmd, UIView *view) {
     if (origSetPV) origSetPV(self, _cmd, view);
+    if (gLeadMissing) KZScheduleReplace((UIView *)self);
 }
 
 static void KZTryReplace(UIView *container) {
-    return;   // v1.13：全部改为“提供给系统”，不再贴子视图
+    if (!gLeadMissing) return;
 
     if (!container || !container.window) return;
     if (container.bounds.size.width < 4) return;
@@ -174,8 +175,8 @@ static void KZTryReplace(UIView *container) {
 
     CGRect b = pv.bounds;
     BOOL narrow = (b.size.height - b.size.width) > 1.5;
-    if (narrow && !KZPrefBool(@"leftOn", YES)) return;
-    if (!narrow && !KZPrefBool(@"rightOn", YES)) return;
+    if (!narrow) return;
+    if (!KZPrefBool(@"leftOn", YES)) return;
     gUseDuck = !narrow;
     PLog(@"[slot] %.0fx%.0f -> %@", b.size.width, b.size.height, narrow ? @"写轮眼" : @"小鸭子");
     CGFloat side = MAX(b.size.width, b.size.height);
@@ -356,10 +357,7 @@ static UIView *(*origTrailView)(id, SEL);
 static UIView *myTrailView(id self, SEL _cmd) {
     UIView *orig = origTrailView ? origTrailView(self, _cmd) : nil;
     NSString *eid = KZElemId(self);
-    if ([eid.lowercaseString containsString:@"screenrecording"] && KZPrefBool(@"rightOn", YES)) {
-        KZTrailLog(@"trailingView");
-        return KZDuckView();
-    }
+    // v1.15：鸭子暂时关闭
     return orig;
 }
 
@@ -367,14 +365,12 @@ static UIView *(*origExpTrailView)(id, SEL);
 static UIView *myExpTrailView(id self, SEL _cmd) {
     UIView *orig = origExpTrailView ? origExpTrailView(self, _cmd) : nil;
     NSString *eid = KZElemId(self);
-    if ([eid.lowercaseString containsString:@"screenrecording"] && KZPrefBool(@"rightOn", YES)) {
-        KZTrailLog(@"expandedTrailingView");
-        return KZDuckView();
-    }
+    // v1.15：鸭子暂时关闭
     return orig;
 }
 
 static BOOL gH1 = NO, gH2 = NO, gH3 = NO, gH4 = NO, gH5 = NO;
+static BOOL gLeadMissing = NO;
 static void KZInstallModeHooks(void) {
     Class c = NSClassFromString(@"SBSystemApertureSceneElement");
     if (!c) return;
@@ -404,6 +400,7 @@ static void KZInstallModeHooks(void) {
         if ([c instancesRespondToSelector:l1]) { MSHookMessageEx(c, l1, (IMP)myLeadView, (IMP *)&origLeadView); m++; }
         if ([c instancesRespondToSelector:l2]) { MSHookMessageEx(c, l2, (IMP)myExpLeadView, (IMP *)&origExpLeadView); m++; }
         gH5 = YES;
+        if (m == 0) gLeadMissing = YES;
         PLog(@"[lead] hooks installed on %d selectors", m);
     }
 }
@@ -461,7 +458,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.13 (all provided views)");
+    PLog(@"ctor v1.15 (no duck, fallback)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
