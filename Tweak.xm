@@ -160,6 +160,8 @@ static void KZSetPV(id self, SEL _cmd, UIView *view) {
     if (gLeadMissing) KZScheduleReplace((UIView *)self);
 }
 
+static BOOL gLeadMissing = NO;
+
 static void KZTryReplace(UIView *container) {
     if (!gLeadMissing) return;
 
