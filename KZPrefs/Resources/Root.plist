@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>title</key><string>写轮眼</string>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>素材</string>
+			<key>footerText</key><string>导入的图片会裁成正方形、缩到 320×320 存进设置里。</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSStaticTextCell</string>
+			<key>key</key><string>eyeName</string>
+			<key>label</key><string>当前素材：内置写轮眼</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSButtonCell</string>
+			<key>label</key><string>从相册导入图片…</string>
+			<key>action</key><string>importPhoto</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSButtonCell</string>
+			<key>label</key><string>从文件导入 PNG…</string>
+			<key>action</key><string>importFile</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSButtonCell</string>
+			<key>label</key><string>恢复内置写轮眼</string>
+			<key>action</key><string>resetEye</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>转速</string>
+			<key>footerText</key><string>秒/圈。越小转得越快，1.5 是默认。</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSliderCell</string>
+			<key>key</key><string>duration</string>
+			<key>label</key><string>转速 duration</string>
+			<key>default</key><string>1.5</string>
+			<key>min</key><real>0.2</real>
+			<key>max</key><real>5.0</real>
+			<key>isContinuous</key><true/>
+			<key>showValue</key><true/>
+			<key>defaults</key><string>com.minis.kzsa</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>label</key><string>大小</string>
+			<key>footerText</key><string>1.00 = 正好填满那个圆，0.8 会小一圈。</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSSliderCell</string>
+			<key>key</key><string>scale</string>
+			<key>label</key><string>大小 scale</string>
+			<key>default</key><string>1.0</string>
+			<key>min</key><real>0.6</real>
+			<key>max</key><real>1.2</real>
+			<key>isContinuous</key><true/>
+			<key>showValue</key><true/>
+			<key>defaults</key><string>com.minis.kzsa</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSGroupCell</string>
+			<key>footerText</key><string>改完立即生效；如果没变，点下面的按钮，或重新开始一次录屏。</string>
+		</dict>
+		<dict>
+			<key>cell</key><string>PSButtonCell</string>
+			<key>label</key><string>立即应用</string>
+			<key>action</key><string>applyNow</string>
+		</dict>
+	</array>
+</dict>
+</plist>
