@@ -3,31 +3,25 @@
 #import <stdarg.h>
 
 #define KZ_LOG @"/var/mobile/KZprobe.log"
+#define KZ_DOMAIN "com.minis.kzprobe"
+
+static NSMutableString *gDump = nil;
+static void KZFlush(void) {
+    if (!gDump) return;
+    CFPreferencesSetAppValue(CFSTR("dump"), (__bridge CFStringRef)[gDump copy], CFSTR(KZ_DOMAIN));
+    CFPreferencesAppSynchronize(CFSTR(KZ_DOMAIN));
+}
 
 static void PLog(NSString *fmt, ...) {
+    if (!gDump) gDump = [NSMutableString string];
     va_list ap; va_start(ap, fmt);
     NSString *body = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
     df.dateFormat = @"HH:mm:ss.SSS";
     NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [df stringFromDate:[NSDate date]], body];
-
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSDictionary *attr = [fm attributesOfItemAtPath:KZ_LOG error:nil];
-    if ([attr fileSize] > 120 * 1024) {
-        [line writeToFile:KZ_LOG atomically:YES encoding:NSUTF8StringEncoding error:nil];
-        return;
-    }
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:KZ_LOG];
-    if (!fh) {
-        [line writeToFile:KZ_LOG atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    } else {
-        @try {
-            [fh seekToEndOfFile];
-            [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-            [fh closeFile];
-        } @catch (...) {}
-    }
+    if (gDump.length < 60000) [gDump appendString:line];
+    KZFlush();
 }
 
 static NSString *KZChain(UIView *v) {
