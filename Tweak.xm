@@ -57,6 +57,34 @@ static NSString *KZContext(UIView *v) {
     return [out componentsJoinedByString:@" | "];
 }
 
+#import <objc/runtime.h>
+
+static BOOL gDumped = NO;
+
+static void KZDumpIvars(UIView *v, NSString *tag) {
+    UIView *cur = v;
+    for (int i = 0; i < 8 && cur; i++) {
+        unsigned int count = 0;
+        Ivar *ivars = class_copyIvarList([cur class], &count);
+        NSMutableString *line = [NSMutableString string];
+        for (unsigned k = 0; k < count && k < 40; k++) {
+            const char *name = ivar_getName(ivars[k]);
+            const char *type = ivar_getTypeEncoding(ivars[k]);
+            [line appendFormat:@"%s%s ", name ? name : "?", type ? type : "?"];
+        }
+        if (ivars) free(ivars);
+        PLog(@"[ivars %@] %@ :: %@", tag, NSStringFromClass([cur class]), line);
+        cur = cur.superview;
+    }
+}
+
+static void KZDumpTree(UIView *v, NSString *tag, int depth) {
+    if (depth > 3) return;
+    PLog(@"[tree %@] %@(%.0fx%.0f)%@", tag, NSStringFromClass([v class]),
+         v.frame.size.width, v.frame.size.height, v.isHidden ? @" hidden" : @"");
+    for (UIView *s in v.subviews) KZDumpTree(s, tag, depth + 1);
+}
+
 static UIView *gEye = nil;
 static UIView *KZEye(CGRect frame) {
     if (gEye) return gEye;
@@ -111,11 +139,10 @@ static void KZSetPV(id self, SEL _cmd, UIView *view) {
              view.frame.size.width, view.frame.size.height, ctx.length ? ctx : @"(空)");
     }
 
-    NSString *low = ctx.lowercaseString;
-    if (view && ([low containsString:@"recording"] || [low containsString:@"replay"])) {
-        PLog(@"[replace] 命中，换入写轮眼");
-        if (origSetPV) origSetPV(self, _cmd, KZEye(container.bounds));
-        return;
+    if (view && view.frame.size.height > 20 && !gDumped) {
+        gDumped = YES;
+        KZDumpIvars(container, @"pv");
+        KZDumpTree(view, @"pv", 0);
     }
     if (origSetPV) origSetPV(self, _cmd, view);
 }
