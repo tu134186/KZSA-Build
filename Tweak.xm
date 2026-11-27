@@ -101,6 +101,8 @@ static BOOL KZIsRecording(UIView *container) {
     return [eid.lowercaseString containsString:@"screenrecording"];
 }
 
+static void KZScheduleReplace(UIView *container);
+
 static void KZSetPV(id self, SEL _cmd, UIView *view) {
     if (origSetPV) origSetPV(self, _cmd, view);
     KZScheduleReplace((UIView *)self);
