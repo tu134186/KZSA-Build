@@ -119,6 +119,23 @@ static void KZTryReplace(UIView *container) {
     UIView *eye = KZEye(container.bounds);
     eye.tag = 0x4B5A;
     if (origSetPV) origSetPV(container, @selector(setProvidedView:), eye);
+
+    // 屏幕真正显示的是 _portalView，它的 sourceView 也要指向新视图
+    Ivar pvIvar = class_getInstanceVariable([container class], "_portalView");
+    if (pvIvar) {
+        @try {
+            id portal = object_getIvar(container, pvIvar);
+            if (portal) {
+                SEL sel = NSSelectorFromString(@"setSourceView:");
+                if ([portal respondsToSelector:sel]) {
+                    typedef void (*Fn)(id, SEL, UIView *);
+                    Fn fn = (Fn)[portal methodForSelector:sel];
+                    if (fn) fn(portal, sel, eye);
+                    PLog(@"[portal] sourceView 已指向写轮眼");
+                }
+            }
+        } @catch (...) {}
+    }
 }
 
 static void KZScheduleReplace(UIView *container) {
@@ -151,7 +168,7 @@ static void KZTryInstall(void) {
 }
 
 %ctor {
-    PLog(@"ctor v1.2 (delayed replace)");
+    PLog(@"ctor v1.3 (portal sourceView)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { KZTryInstall(); }];
     });
