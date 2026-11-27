@@ -56,11 +56,21 @@ static NSString *KZIdOf(UIView *v) {
     return @"-";
 }
 
+static NSArray<UIWindow *> *KZWindows(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (UIScene *sc in [[UIApplication sharedApplication] connectedScenes]) {
+        if ([sc isKindOfClass:[UIWindowScene class]]) {
+            [out addObjectsFromArray:((UIWindowScene *)sc).windows];
+        }
+    }
+    return out;
+}
+
 static void KZDump(NSString *tag) {
     static NSMutableSet *seen = nil;
     if (!seen) seen = [NSMutableSet set];
 
-    NSArray *windows = [[UIApplication sharedApplication] windows];
+    NSArray *windows = KZWindows();
     int found = 0;
     for (UIWindow *w in windows) {
         NSMutableArray *stack = [NSMutableArray arrayWithObject:w];
