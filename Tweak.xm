@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <substrate.h>
 #import <stdarg.h>
 
 #define KZ_LOG @"/var/mobile/KZprobe.log"
@@ -20,19 +21,16 @@ static void PLog(NSString *fmt, ...) {
     va_list ap; va_start(ap, fmt);
     NSString *body = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
-    NSString *line = [NSString stringWithFormat:@"%@\n", body];
-    if (gDump.length < 60000) [gDump appendString:line];
+    if (gDump.length < 60000) [gDump appendFormat:@"%@\n", body];
     KZFlush();
 }
 
-static NSMutableSet *gSeenCtx = nil;
-static NSMutableSet *gReplaced = nil;
+static NSMutableSet *gSeen = nil;
 
-// 沿父视图往上找 element 的标识信息
 static NSString *KZContext(UIView *v) {
     NSMutableArray *out = [NSMutableArray array];
     NSArray *keys = @[ @"elementIdentifier", @"identifier", @"bundleIdentifier",
-                       @"sceneIdentifier", @"element", @"sceneElement", @"dataSource" ];
+                       @"sceneIdentifier", @"element", @"sceneElement", @"dataSource", @"clientStorage" ];
     UIView *cur = v;
     int depth = 0;
     while (cur && depth < 14) {
@@ -40,19 +38,15 @@ static NSString *KZContext(UIView *v) {
             @try {
                 id val = [cur valueForKey:k];
                 if (!val) continue;
-                NSString *desc;
-                if ([val isKindOfClass:[NSString class]]) {
-                    desc = (NSString *)val;
-                } else {
-                    desc = [NSString stringWithFormat:@"%@", val];
-                    if ([val respondsToSelector:@selector(elementIdentifier)]) {
-                        @try {
-                            id inner = [val valueForKey:@"elementIdentifier"];
-                            if (inner) desc = [desc stringByAppendingFormat:@" elemId=%@", inner];
-                        } @catch (...) {}
-                    }
+                NSString *desc = [val isKindOfClass:[NSString class]] ? (NSString *)val
+                                                                     : [NSString stringWithFormat:@"%@", val];
+                if ([val respondsToSelector:@selector(elementIdentifier)]) {
+                    @try {
+                        id inner = [val valueForKey:@"elementIdentifier"];
+                        if (inner) desc = [desc stringByAppendingFormat:@" elemId=%@", inner];
+                    } @catch (...) {}
                 }
-                if (desc.length && [desc length] < 300) {
+                if (desc.length && desc.length < 260) {
                     [out addObject:[NSString stringWithFormat:@"%@.%@=%@", NSStringFromClass([cur class]), k, desc]];
                 }
             } @catch (...) {}
@@ -63,77 +57,85 @@ static NSString *KZContext(UIView *v) {
     return [out componentsJoinedByString:@" | "];
 }
 
-static UIView *gEyeView = nil;
-static UIView *KZEyeView(void) {
-    if (gEyeView) return gEyeView;
-
-    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
+static UIView *gEye = nil;
+static UIView *KZEye(CGRect frame) {
+    if (gEye) return gEye;
+    UIView *v = [[UIView alloc] initWithFrame:frame];
     v.backgroundColor = [UIColor blackColor];
-    v.layer.cornerRadius = 11.0;
+    v.layer.cornerRadius = frame.size.width / 2.0;
     v.layer.masksToBounds = YES;
+    v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
     UIImage *img = [UIImage imageWithContentsOfFile:KZ_EYE];
     if (!img) img = [UIImage imageWithContentsOfFile:KZ_EYE_ALT];
-    if (img) {
-        UIImageView *iv = [[UIImageView alloc] initWithImage:img];
-        iv.frame = v.bounds;
-        iv.contentMode = UIViewContentModeScaleAspectFill;
-        iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [v addSubview:iv];
-
-        CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
-        spin.fromValue = @(0.0);
-        spin.toValue = @(M_PI * 2.0);
-        spin.duration = 1.5;
-        spin.repeatCount = INFINITY;
-        [iv.layer addAnimation:spin forKey:@"kzspin"];
-
-        CABasicAnimation *breathe = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
-        breathe.fromValue = @(1.0);
-        breathe.toValue = @(1.06);
-        breathe.duration = 1.1;
-        breathe.autoreverses = YES;
-        breathe.repeatCount = INFINITY;
-        [v.layer addAnimation:breathe forKey:@"kzbreathe"];
-    } else {
-        PLog(@"[img] 读不到 %@", KZ_EYE);
+    if (!img) {
+        PLog(@"[img] 读不到素材");
+        return v;
     }
-    gEyeView = v;
+    UIImageView *iv = [[UIImageView alloc] initWithImage:img];
+    iv.frame = v.bounds;
+    iv.contentMode = UIViewContentModeScaleAspectFill;
+    iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [v addSubview:iv];
+
+    CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+    spin.fromValue = @(0.0);
+    spin.toValue = @(M_PI * 2.0);
+    spin.duration = 1.5;
+    spin.repeatCount = INFINITY;
+    [iv.layer addAnimation:spin forKey:@"kzspin"];
+
+    CABasicAnimation *breathe = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+    breathe.fromValue = @(1.0);
+    breathe.toValue = @(1.06);
+    breathe.duration = 1.1;
+    breathe.autoreverses = YES;
+    breathe.repeatCount = INFINITY;
+    [v.layer addAnimation:breathe forKey:@"kzbreathe"];
+
+    gEye = v;
     return v;
 }
 
-@interface _SAUIProvidedViewContainerView : UIView
-- (void)setProvidedView:(UIView *)view;
-@end
+static void (*origSetPV)(id, SEL, UIView *) = NULL;
 
-%hook _SAUIProvidedViewContainerView
-
-- (void)setProvidedView:(UIView *)view {
-    NSString *ctx = KZContext((UIView *)self);
-    NSString *key = [NSString stringWithFormat:@"%p|%@|%@", self, NSStringFromClass([view class]), ctx];
-    if (!gSeenCtx) gSeenCtx = [NSMutableSet set];
-    if (ctx.length && ![gSeenCtx containsObject:key]) {
-        [gSeenCtx addObject:key];
-        PLog(@"[setPV] so=%@ provided=%@ %.1fx%.1f ctx=%@",
-             NSStringFromClass([self class]), NSStringFromClass([view class]),
-             view.frame.size.width, view.frame.size.height, ctx);
+static void KZSetPV(id self, SEL _cmd, UIView *view) {
+    UIView *container = (UIView *)self;
+    NSString *ctx = KZContext(container);
+    if (!gSeen) gSeen = [NSMutableSet set];
+    NSString *key = [NSString stringWithFormat:@"%@|%.0fx%.0f|%@", NSStringFromClass([view class]),
+                     view.frame.size.width, view.frame.size.height, ctx];
+    if (![gSeen containsObject:key]) {
+        [gSeen addObject:key];
+        PLog(@"[setPV] provided=%@ %.1fx%.1f ctx=%@", NSStringFromClass([view class]),
+             view.frame.size.width, view.frame.size.height, ctx.length ? ctx : @"(空)");
     }
+
     NSString *low = ctx.lowercaseString;
     if (view && ([low containsString:@"recording"] || [low containsString:@"replay"])) {
-        if (!gReplaced) gReplaced = [NSMutableSet set];
-        NSString *tag = [NSString stringWithFormat:@"%p", self];
-        if (![gReplaced containsObject:tag]) {
-            [gReplaced addObject:tag];
-            PLog(@"[replace] 命中屏幕录制 element，换入写轮眼视图");
-        }
-        %orig(KZEyeView());
+        PLog(@"[replace] 命中，换入写轮眼");
+        if (origSetPV) origSetPV(self, _cmd, KZEye(container.bounds));
         return;
     }
-    %orig(view);
+    if (origSetPV) origSetPV(self, _cmd, view);
 }
 
-%end
+static BOOL gInstalled = NO;
+
+static void KZTryInstall(void) {
+    if (gInstalled) return;
+    Class c = NSClassFromString(@"_SAUIProvidedViewContainerView");
+    if (!c) return;
+    MSHookMessageEx(c, @selector(setProvidedView:), (IMP)KZSetPV, (IMP *)&origSetPV);
+    gInstalled = YES;
+    PLog(@"[hook] 已挂钩 %@ setProvidedView:", NSStringFromClass(c));
+}
 
 %ctor {
-    PLog(@"ctor v0.4 (eye replace)");
+    PLog(@"ctor v0.5 (dynamic hook)");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
+            KZTryInstall();
+        }];
+    });
 }
