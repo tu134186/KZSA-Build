@@ -142,6 +142,48 @@ static UIView *KZSharinganView(void) {
 static id gProvider = nil;
 static id gAssertion = nil;
 
+static id KZManagerFromObject(id obj, int depth) {
+    if (!obj || depth > 8) return nil;
+    NSString *cn = NSStringFromClass([obj class]);
+    if ([cn containsString:@"Aperture"]) {
+        NSArray *keys = @[ @"_systemApertureManager", @"systemApertureManager", @"_manager" ];
+        for (NSString *k in keys) {
+            @try {
+                id m = [obj valueForKey:k];
+                if (m && [NSStringFromClass([m class]) containsString:@"Aperture"]) {
+                    PLog(@"[find] %@.%@ = %@", cn, k, NSStringFromClass([m class]));
+                    return m;
+                }
+            } @catch (...) {}
+        }
+    }
+    if ([obj isKindOfClass:[UIWindow class]]) {
+        id m = KZManagerFromObject([(UIWindow *)obj rootViewController], depth + 1);
+        if (m) return m;
+    }
+    if ([obj isKindOfClass:[UIViewController class]]) {
+        UIViewController *vc = (UIViewController *)obj;
+        id m = KZManagerFromObject(vc.view, depth + 1);
+        if (m) return m;
+        for (UIViewController *c in vc.childViewControllers) {
+            m = KZManagerFromObject(c, depth + 1);
+            if (m) return m;
+        }
+        m = KZManagerFromObject(vc.presentedViewController, depth + 1);
+        if (m) return m;
+    }
+    if ([obj isKindOfClass:[UIView class]]) {
+        UIView *v = (UIView *)obj;
+        for (UIView *sub in v.subviews) {
+            id m = KZManagerFromObject(sub, depth + 1);
+            if (m) return m;
+        }
+        id m = KZManagerFromObject([v nextResponder], depth + 1);
+        if (m) return m;
+    }
+    return nil;
+}
+
 static id KZFindManager(void) {
     NSMutableArray *windows = [NSMutableArray array];
     for (UIScene *sc in [[UIApplication sharedApplication] connectedScenes]) {
@@ -149,28 +191,29 @@ static id KZFindManager(void) {
             [windows addObjectsFromArray:((UIWindowScene *)sc).windows];
         }
     }
+    PLog(@"[find] windows=%lu", (unsigned long)windows.count);
     for (UIWindow *w in windows) {
-        NSMutableArray *stack = [NSMutableArray arrayWithObject:w];
-        while (stack.count) {
-            id v = [stack lastObject];
-            [stack removeLastObject];
-            NSString *cn = NSStringFromClass([v class]);
-            if ([cn containsString:@"SystemAperture"]) {
-                if ([v respondsToSelector:NSSelectorFromString(@"_systemApertureManager")]) {
-                    id mgr = ((id (*)(id, SEL))objc_msgSend)(v, NSSelectorFromString(@"_systemApertureManager"));
-                    if (mgr) return mgr;
+        id m = KZManagerFromObject(w, 0);
+        if (m) return m;
+    }
+
+    // 退路：从类方法里找 shared 实例
+    NSArray *names = @[ @"SBSystemApertureController", @"SBSystemApertureViewController",
+                        @"SAUISystemApertureManager", @"SBSystemApertureManager" ];
+    NSArray *sels = @[ @"sharedInstance", @"sharedController", @"sharedManager", @"_sharedInstance" ];
+    for (NSString *n in names) {
+        Class c = NSClassFromString(n);
+        if (!c) continue;
+        for (NSString *sn in sels) {
+            SEL sel = NSSelectorFromString(sn);
+            if ([c respondsToSelector:sel]) {
+                id inst = ((id (*)(id, SEL))objc_msgSend)(c, sel);
+                if (inst) {
+                    PLog(@"[find] %@.%@ = %@", n, sn, NSStringFromClass([inst class]));
+                    id m = KZManagerFromObject(inst, 0);
+                    if (m) return m;
+                    if ([NSStringFromClass([inst class]) containsString:@"Aperture"]) return inst;
                 }
-                @try {
-                    id mgr = [v valueForKey:@"_systemApertureManager"];
-                    if (mgr) return mgr;
-                } @catch (...) {}
-            }
-            if ([v isKindOfClass:[UIView class]]) {
-                for (UIView *s in [(UIView *)v subviews]) [stack addObject:s];
-            } else if ([v isKindOfClass:[UIViewController class]]) {
-                UIViewController *vc = (UIViewController *)v;
-                if (vc.view) [stack addObject:vc.view];
-                for (UIViewController *c in vc.childViewControllers) [stack addObject:c];
             }
         }
     }
@@ -224,7 +267,7 @@ static void KZRegister(void) {
 %end
 
 %ctor {
-    PLog(@"ctor v1.17 (own element)");
+    PLog(@"ctor v1.18 (find manager)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (!KZPrefBool(@"enabled", YES)) return;
         KZRegister();
