@@ -194,8 +194,62 @@ static void KZDidMove(id self, SEL _cmd) {
     KZScheduleReplace((UIView *)self);
 }
 
-static BOOL gH1 = NO, gH2 = NO;
+// —— 布局模式：让录屏 element 请求更宽的布局
+static NSMutableSet *gModeSeen = nil;
+static NSString *KZElemId(id elem) {
+    NSString *eid = nil;
+    @try { eid = [elem valueForKey:@"elementIdentifier"]; } @catch (...) {}
+    return [eid isKindOfClass:[NSString class]] ? eid : nil;
+}
+static void KZModeLog(id elem, NSString *name, NSInteger before, NSInteger after) {
+    NSString *eid = KZElemId(elem);
+    if (![eid.lowercaseString containsString:@"screenrecording"]) return;
+    if (!gModeSeen) gModeSeen = [NSMutableSet set];
+    NSString *k = [NSString stringWithFormat:@"%@-%ld-%ld", name, (long)before, (long)after];
+    if ([gModeSeen containsObject:k]) return;
+    [gModeSeen addObject:k];
+    PLog(@"[mode] %@ before=%ld after=%ld", name, (long)before, (long)after);
+}
+
+static NSInteger (*origPrefMode)(id, SEL);
+static NSInteger myPrefMode(id self, SEL _cmd) {
+    NSInteger v = origPrefMode ? origPrefMode(self, _cmd) : 0;
+    NSInteger out = MAX(v, 2);
+    KZModeLog(self, @"preferredLayoutMode", v, out);
+    return out;
+}
+static NSInteger (*origMaxMode)(id, SEL);
+static NSInteger myMaxMode(id self, SEL _cmd) {
+    NSInteger v = origMaxMode ? origMaxMode(self, _cmd) : 0;
+    NSInteger out = MAX(v, 3);
+    KZModeLog(self, @"maximumSupportedLayoutMode", v, out);
+    return out;
+}
+static NSInteger (*origMinMode)(id, SEL);
+static NSInteger myMinMode(id self, SEL _cmd) {
+    NSInteger v = origMinMode ? origMinMode(self, _cmd) : 0;
+    KZModeLog(self, @"minimumLayoutMode", v, v);
+    return v;
+}
+
+static BOOL gH1 = NO, gH2 = NO, gH3 = NO;
+static void KZInstallModeHooks(void) {
+    Class c = NSClassFromString(@"SBSystemApertureSceneElement");
+    if (!c) return;
+    if (!gH3) {
+        SEL s1 = NSSelectorFromString(@"preferredLayoutMode");
+        SEL s2 = NSSelectorFromString(@"maximumSupportedLayoutMode");
+        SEL s3 = NSSelectorFromString(@"minimumLayoutMode");
+        if ([c instancesRespondToSelector:s1]) MSHookMessageEx(c, s1, (IMP)myPrefMode, (IMP *)&origPrefMode);
+        if ([c instancesRespondToSelector:s2]) MSHookMessageEx(c, s2, (IMP)myMaxMode, (IMP *)&origMaxMode);
+        if ([c instancesRespondToSelector:s3]) MSHookMessageEx(c, s3, (IMP)myMinMode, (IMP *)&origMinMode);
+        gH3 = YES;
+        PLog(@"[mode] hooks installed");
+    }
+}
+
 static void KZTryInstall(void) {
+    KZInstallModeHooks();
     Class c = NSClassFromString(@"_SAUIProvidedViewContainerView");
     if (!c) return;
     if (!gH1) {
@@ -247,7 +301,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.8 (eye left / duck right)");
+    PLog(@"ctor v1.9 (layout mode)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
