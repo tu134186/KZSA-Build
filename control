@@ -1,6 +1,6 @@
 Package: com.minis.kzsa
 Name: KZ SA Probe
-Version: 1.0
+Version: 1.1
 Architecture: iphoneos-arm64
 Description: SystemAperture 结构探针（只读，不修改任何东西）
 Maintainer: Minis
