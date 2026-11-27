@@ -1,0 +1,6 @@
+#!/bin/sh
+DL=/var/jb/Library/MobileSubstrate/DynamicLibraries
+PATCH=/usr/lib/DynamicPatches/AutoPatches.dylib
+[ -e "$PATCH" ] || PATCH=/var/jb/usr/lib/DynamicPatches/AutoPatches.dylib
+[ -d "$DL" ] && [ -e "$PATCH" ] && ln -sf "$PATCH" "$DL/KZSA.dylib.roothidepatch" 2>/dev/null || true
+exit 0
