@@ -5,6 +5,7 @@
 #import <objc/runtime.h>
 #import <stdarg.h>
 #import "kzeye_b64.h"
+#import "kzduck_b64.h"
 
 #define KZ_DOMAIN "com.minis.kzprobe"
 #define KZ_PREF_DOMAIN "com.minis.kzsa"
@@ -76,6 +77,13 @@ static UIImage *KZUserImage(void) {
     return [UIImage imageWithData:d];
 }
 
+static UIImage *KZDuckImage(void) {
+    NSData *d = [[NSData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:kKZduckB64]
+                                                    options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    return d.length > 200 ? [UIImage imageWithData:d] : nil;
+}
+
+static BOOL gUseDuck = NO;
 static UIView *KZEye(CGRect frame) {
     if (frame.size.width < 4) frame = CGRectMake(0, 0, 22, 22);
     UIView *v = [[UIView alloc] initWithFrame:frame];
@@ -84,7 +92,7 @@ static UIView *KZEye(CGRect frame) {
     v.layer.masksToBounds = YES;
     v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
-    UIImage *img = KZUserImage();
+    UIImage *img = gUseDuck ? KZDuckImage() : KZUserImage();
     if (!img) {
         NSData *d = [[NSData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:kKZeyeB64]
                                                         options:NSDataBase64DecodingIgnoreUnknownCharacters];
@@ -148,10 +156,9 @@ static void KZTryReplace(UIView *container) {
     if ([pv viewWithTag:0x4B5A]) return;
 
     CGRect b = pv.bounds;
-    if (fabs(b.size.width - b.size.height) > 1.5) {
-        PLog(@"[skip] 非方形槽位 %.0fx%.0f", b.size.width, b.size.height);
-        return;
-    }
+    BOOL narrow = (b.size.height - b.size.width) > 1.5;
+    gUseDuck = !narrow;   // 窄槽（左侧贴边）放写轮眼，方槽（独立圆）放小鸭子
+    PLog(@"[slot] %.0fx%.0f -> %@", b.size.width, b.size.height, narrow ? @"写轮眼" : @"小鸭子");
     CGFloat side = MIN(b.size.width, b.size.height);
     if (side < 4) side = 22;
     double scale = KZPrefNum(@"scale", 1.0);
@@ -240,7 +247,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.7 (square only)");
+    PLog(@"ctor v1.8 (eye left / duck right)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
