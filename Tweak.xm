@@ -148,6 +148,10 @@ static void KZTryReplace(UIView *container) {
     if ([pv viewWithTag:0x4B5A]) return;
 
     CGRect b = pv.bounds;
+    if (fabs(b.size.width - b.size.height) > 1.5) {
+        PLog(@"[skip] 非方形槽位 %.0fx%.0f", b.size.width, b.size.height);
+        return;
+    }
     CGFloat side = MIN(b.size.width, b.size.height);
     if (side < 4) side = 22;
     double scale = KZPrefNum(@"scale", 1.0);
@@ -236,7 +240,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.6 (prefs)");
+    PLog(@"ctor v1.7 (square only)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
