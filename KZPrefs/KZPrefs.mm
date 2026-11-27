@@ -127,15 +127,19 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
 - (void)layoutSubviews {
     [super layoutSubviews];
     self.titleLabel.hidden = YES;
+    self.textLabel.hidden = YES;
+    self.detailTextLabel.hidden = YES;
+    self.textLabel.text = nil;
+    self.detailTextLabel.text = nil;
     CGRect b = self.contentView.bounds;
     CGFloat w = b.size.width, h = b.size.height;
-    CGFloat valueW = 58, gap = 10, btn = 22;
-    CGFloat valueX = w - 24 - valueW;
+    CGFloat valueW = 56, gap = 10, btn = 22;
+    CGFloat valueX = w - 16 - valueW;
     CGFloat plusX = valueX - gap - btn;
-    CGFloat sliderX = 94 + btn + gap;
+    CGFloat sliderX = 96 + btn + gap;
     CGFloat sliderW = plusX - gap - sliderX;
-    _name.frame = CGRectMake(14, (h - 21) / 2.0, sliderX - 14 - 6, 21);
-    _minus.frame = CGRectMake(94, (h - btn) / 2.0, btn, btn);
+    _name.frame = CGRectMake(16, (h - 21) / 2.0, sliderX - 16 - 8, 21);
+    _minus.frame = CGRectMake(96, (h - btn) / 2.0, btn, btn);
     _slider.frame = CGRectMake(sliderX, (h - 30) / 2.0, MAX(sliderW, 40), 30);
     _plus.frame = CGRectMake(plusX, (h - btn) / 2.0, btn, btn);
     _value.frame = CGRectMake(valueX, (h - 20) / 2.0, valueW, 20);
