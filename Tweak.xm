@@ -232,7 +232,64 @@ static NSInteger myMinMode(id self, SEL _cmd) {
     return v;
 }
 
-static BOOL gH1 = NO, gH2 = NO, gH3 = NO;
+// —— 给录屏 element 提供 trailing 视图（小鸭子），让系统加宽并给第二个位置
+static UIView *gDuckView = nil;
+static UIView *KZDuckView(void) {
+    if (gDuckView) return gDuckView;
+    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
+    v.backgroundColor = [UIColor clearColor];
+    v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    UIImage *img = KZDuckImage();
+    if (img) {
+        UIImageView *iv = [[UIImageView alloc] initWithImage:img];
+        iv.frame = v.bounds;
+        iv.contentMode = UIViewContentModeScaleAspectFit;
+        iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [v addSubview:iv];
+        CABasicAnimation *bob = [CABasicAnimation animationWithKeyPath:@"transform.translation.y"];
+        bob.fromValue = @(-1.2);
+        bob.toValue = @(1.2);
+        bob.duration = 0.9;
+        bob.autoreverses = YES;
+        bob.repeatCount = INFINITY;
+        [iv.layer addAnimation:bob forKey:@"kzbob"];
+    }
+    gDuckView = v;
+    return v;
+}
+
+static NSMutableSet *gTrailSeen = nil;
+
+static void KZTrailLog(NSString *name) {
+    if (!gTrailSeen) gTrailSeen = [NSMutableSet set];
+    if ([gTrailSeen containsObject:name]) return;
+    [gTrailSeen addObject:name];
+    PLog(@"[trail] 提供鸭子 via %@", name);
+}
+
+static UIView *(*origTrailView)(id, SEL);
+static UIView *myTrailView(id self, SEL _cmd) {
+    UIView *orig = origTrailView ? origTrailView(self, _cmd) : nil;
+    NSString *eid = KZElemId(self);
+    if ([eid.lowercaseString containsString:@"screenrecording"]) {
+        KZTrailLog(@"trailingView");
+        return KZDuckView();
+    }
+    return orig;
+}
+
+static UIView *(*origExpTrailView)(id, SEL);
+static UIView *myExpTrailView(id self, SEL _cmd) {
+    UIView *orig = origExpTrailView ? origExpTrailView(self, _cmd) : nil;
+    NSString *eid = KZElemId(self);
+    if ([eid.lowercaseString containsString:@"screenrecording"]) {
+        KZTrailLog(@"expandedTrailingView");
+        return KZDuckView();
+    }
+    return orig;
+}
+
+static BOOL gH1 = NO, gH2 = NO, gH3 = NO, gH4 = NO;
 static void KZInstallModeHooks(void) {
     Class c = NSClassFromString(@"SBSystemApertureSceneElement");
     if (!c) return;
@@ -245,6 +302,15 @@ static void KZInstallModeHooks(void) {
         if ([c instancesRespondToSelector:s3]) MSHookMessageEx(c, s3, (IMP)myMinMode, (IMP *)&origMinMode);
         gH3 = YES;
         PLog(@"[mode] hooks installed");
+    }
+    if (!gH4) {
+        SEL s1 = NSSelectorFromString(@"trailingView");
+        SEL s2 = NSSelectorFromString(@"expandedTrailingView");
+        int n = 0;
+        if ([c instancesRespondToSelector:s1]) { MSHookMessageEx(c, s1, (IMP)myTrailView, (IMP *)&origTrailView); n++; }
+        if ([c instancesRespondToSelector:s2]) { MSHookMessageEx(c, s2, (IMP)myExpTrailView, (IMP *)&origExpTrailView); n++; }
+        gH4 = YES;
+        PLog(@"[trail] hooks installed on %d selectors", n);
     }
 }
 
@@ -301,7 +367,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.9 (layout mode)");
+    PLog(@"ctor v1.10 (trailing view)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
