@@ -42,6 +42,7 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
 @implementation KZStepperCell {
     UISlider *_slider;
     UILabel *_value;
+    UILabel *_name;
     UIButton *_minus;
     UIButton *_plus;
     double _min, _max, _step;
@@ -59,6 +60,10 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
         if (_step <= 0) _step = 0.05;
         if (_max <= _min) { _min = 0; _max = 1; }
 
+        _name = [[UILabel alloc] init];
+        _name.font = [UIFont systemFontOfSize:17];
+        _name.text = [specifier propertyForKey:@"label"];
+
         _value = [[UILabel alloc] init];
         _value.font = [UIFont monospacedDigitSystemFontOfSize:15 weight:UIFontWeightRegular];
         _value.textColor = [UIColor secondaryLabelColor];
@@ -74,7 +79,7 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
         _plus = [self mkBtn:@"+"];
         [_plus addTarget:self action:@selector(stepUp) forControlEvents:UIControlEventTouchUpInside];
 
-        for (UIView *v in @[ _value, _slider, _minus, _plus ]) [self.contentView addSubview:v];
+        for (UIView *v in @[ _name, _value, _slider, _minus, _plus ]) [self.contentView addSubview:v];
         [self refreshCellContentsWithSpecifier:specifier];
     }
     return self;
@@ -124,10 +129,16 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
     self.titleLabel.hidden = YES;
     CGRect b = self.contentView.bounds;
     CGFloat w = b.size.width, h = b.size.height;
-    _value.frame = CGRectMake(w - 96, (h - 20) / 2.0, 84, 20);
-    _minus.frame = CGRectMake(96, (h - 22) / 2.0, 22, 22);
-    _plus.frame = CGRectMake(w - 96 - 22 - 10 - 0, (h - 22) / 2.0, 22, 22);
-    _slider.frame = CGRectMake(96 + 22 + 10, (h - 30) / 2.0, w - 96 - 22 - 10 - 22 - 10 - 90, 30);
+    CGFloat valueW = 58, gap = 10, btn = 22;
+    CGFloat valueX = w - 24 - valueW;
+    CGFloat plusX = valueX - gap - btn;
+    CGFloat sliderX = 94 + btn + gap;
+    CGFloat sliderW = plusX - gap - sliderX;
+    _name.frame = CGRectMake(14, (h - 21) / 2.0, sliderX - 14 - 6, 21);
+    _minus.frame = CGRectMake(94, (h - btn) / 2.0, btn, btn);
+    _slider.frame = CGRectMake(sliderX, (h - 30) / 2.0, MAX(sliderW, 40), 30);
+    _plus.frame = CGRectMake(plusX, (h - btn) / 2.0, btn, btn);
+    _value.frame = CGRectMake(valueX, (h - 20) / 2.0, valueW, 20);
 }
 
 @end
