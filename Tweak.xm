@@ -2,12 +2,10 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <substrate.h>
+#import <objc/runtime.h>
 #import <stdarg.h>
 
-#define KZ_LOG @"/var/mobile/KZprobe.log"
 #define KZ_DOMAIN "com.minis.kzprobe"
-#define KZ_EYE @"/Library/KZTheme/eye/tomoe2.png"
-#define KZ_EYE_ALT @"/Library/KZTheme/eye/tomoe.png"
 
 static NSMutableString *gDump = nil;
 static void KZFlush(void) {
@@ -15,7 +13,6 @@ static void KZFlush(void) {
     CFPreferencesSetAppValue(CFSTR("dump"), (__bridge CFStringRef)[gDump copy], CFSTR(KZ_DOMAIN));
     CFPreferencesAppSynchronize(CFSTR(KZ_DOMAIN));
 }
-
 static void PLog(NSString *fmt, ...) {
     if (!gDump) gDump = [NSMutableString string];
     va_list ap; va_start(ap, fmt);
@@ -25,154 +22,100 @@ static void PLog(NSString *fmt, ...) {
     KZFlush();
 }
 
+static int gDumpCount = 0;
 static NSMutableSet *gSeen = nil;
 
-static NSString *KZContext(UIView *v) {
-    NSMutableArray *out = [NSMutableArray array];
-    NSArray *keys = @[ @"elementIdentifier", @"identifier", @"bundleIdentifier",
-                       @"sceneIdentifier", @"element", @"sceneElement", @"dataSource", @"clientStorage" ];
+static void KZDumpAncestors(UIView *v, NSString *tag) {
     UIView *cur = v;
     int depth = 0;
-    while (cur && depth < 14) {
-        for (NSString *k in keys) {
-            @try {
-                id val = [cur valueForKey:k];
-                if (!val) continue;
-                NSString *desc = [val isKindOfClass:[NSString class]] ? (NSString *)val
-                                                                     : [NSString stringWithFormat:@"%@", val];
-                if ([val respondsToSelector:@selector(elementIdentifier)]) {
-                    @try {
-                        id inner = [val valueForKey:@"elementIdentifier"];
-                        if (inner) desc = [desc stringByAppendingFormat:@" elemId=%@", inner];
-                    } @catch (...) {}
-                }
-                if (desc.length && desc.length < 260) {
-                    [out addObject:[NSString stringWithFormat:@"%@.%@=%@", NSStringFromClass([cur class]), k, desc]];
-                }
-            } @catch (...) {}
-        }
-        cur = cur.superview;
-        depth++;
-    }
-    return [out componentsJoinedByString:@" | "];
-}
-
-#import <objc/runtime.h>
-
-static int gDumpCount = 0;
-
-static void KZDumpIvars(UIView *v, NSString *tag) {
-    UIView *cur = v;
-    for (int i = 0; i < 8 && cur; i++) {
+    while (cur && depth < 10) {
         unsigned int count = 0;
         Ivar *ivars = class_copyIvarList([cur class], &count);
         NSMutableString *line = [NSMutableString string];
-        for (unsigned k = 0; k < count && k < 40; k++) {
-            const char *name = ivar_getName(ivars[k]);
-            const char *type = ivar_getTypeEncoding(ivars[k]);
-            [line appendFormat:@"%s%s ", name ? name : "?", type ? type : "?"];
+        for (unsigned k = 0; k < count && k < 45; k++) {
+            const char *nm = ivar_getName(ivars[k]);
+            const char *tp = ivar_getTypeEncoding(ivars[k]);
+            NSString *val = @"";
+            if (tp && tp[0] == '@') {
+                @try {
+                    id obj = object_getIvar(cur, ivars[k]);
+                    if (obj) {
+                        NSString *d;
+                        if ([obj isKindOfClass:[NSString class]]) {
+                            d = (NSString *)obj;
+                        } else {
+                            d = NSStringFromClass([obj class]);
+                            if ([obj respondsToSelector:@selector(elementIdentifier)]) {
+                                @try {
+                                    id eid = [obj valueForKey:@"elementIdentifier"];
+                                    if (eid) d = [d stringByAppendingFormat:@" elemId=%@", eid];
+                                } @catch (...) {}
+                            }
+                        }
+                        if (d.length > 90) d = [d substringToIndex:90];
+                        val = [NSString stringWithFormat:@"=%@", d];
+                    }
+                } @catch (...) {}
+            }
+            [line appendFormat:@"%s%@  ", nm ? nm : "?", val];
         }
         if (ivars) free(ivars);
-        PLog(@"[ivars %@] %@ :: %@", tag, NSStringFromClass([cur class]), line);
+        PLog(@"[anc%d %@] %@ :: %@", depth, tag, NSStringFromClass([cur class]), line);
         cur = cur.superview;
+        depth++;
     }
 }
 
-static void KZDumpTree(UIView *v, NSString *tag, int depth) {
-    if (depth > 3) return;
-    PLog(@"[tree %@] %@(%.0fx%.0f)%@", tag, NSStringFromClass([v class]),
-         v.frame.size.width, v.frame.size.height, v.isHidden ? @" hidden" : @"");
-    for (UIView *s in v.subviews) KZDumpTree(s, tag, depth + 1);
-}
-
-static UIView *gEye = nil;
-static UIView * __attribute__((unused)) KZEye(CGRect frame) {
-    if (gEye) return gEye;
-    UIView *v = [[UIView alloc] initWithFrame:frame];
-    v.backgroundColor = [UIColor blackColor];
-    v.layer.cornerRadius = frame.size.width / 2.0;
-    v.layer.masksToBounds = YES;
-    v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-
-    UIImage *img = [UIImage imageWithContentsOfFile:KZ_EYE];
-    if (!img) img = [UIImage imageWithContentsOfFile:KZ_EYE_ALT];
-    if (!img) {
-        PLog(@"[img] 读不到素材");
-        return v;
-    }
-    UIImageView *iv = [[UIImageView alloc] initWithImage:img];
-    iv.frame = v.bounds;
-    iv.contentMode = UIViewContentModeScaleAspectFill;
-    iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [v addSubview:iv];
-
-    CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
-    spin.fromValue = @(0.0);
-    spin.toValue = @(M_PI * 2.0);
-    spin.duration = 1.5;
-    spin.repeatCount = INFINITY;
-    [iv.layer addAnimation:spin forKey:@"kzspin"];
-
-    CABasicAnimation *breathe = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
-    breathe.fromValue = @(1.0);
-    breathe.toValue = @(1.06);
-    breathe.duration = 1.1;
-    breathe.autoreverses = YES;
-    breathe.repeatCount = INFINITY;
-    [v.layer addAnimation:breathe forKey:@"kzbreathe"];
-
-    gEye = v;
-    return v;
+static void (*origDidMove)(id, SEL);
+static void KZDidMove(id self, SEL _cmd) {
+    if (origDidMove) origDidMove(self, _cmd);
+    UIView *container = (UIView *)self;
+    if (!container.window) return;
+    if (gDumpCount >= 4) return;
+    int idx = gDumpCount++;
+    __weak UIView *wc = container;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIView *c = wc;
+        if (!c) return;
+        PLog(@"[moved#%d] %@ %.1fx%.1f inWindow=%d", idx, NSStringFromClass([c class]),
+             c.bounds.size.width, c.bounds.size.height, c.window ? 1 : 0);
+        KZDumpAncestors(c, [NSString stringWithFormat:@"m%d", idx]);
+    });
 }
 
 static void (*origSetPV)(id, SEL, UIView *) = NULL;
-
 static void KZSetPV(id self, SEL _cmd, UIView *view) {
-    UIView *container = (UIView *)self;
-    NSString *ctx = KZContext(container);
-    if (!gSeen) gSeen = [NSMutableSet set];
-    NSString *key = [NSString stringWithFormat:@"%@|%.0fx%.0f|%@", NSStringFromClass([view class]),
-                     view.frame.size.width, view.frame.size.height, ctx];
-    if (![gSeen containsObject:key]) {
-        [gSeen addObject:key];
-        PLog(@"[setPV] provided=%@ %.1fx%.1f ctx=%@", NSStringFromClass([view class]),
-             view.frame.size.width, view.frame.size.height, ctx.length ? ctx : @"(空)");
-    }
-
-    if (view && gDumpCount < 3) {
-        int idx = gDumpCount++;
-        PLog(@"[pv#%d] set: %@ %.1fx%.1f container=%.1fx%.1f", idx, NSStringFromClass([view class]),
-             view.frame.size.width, view.frame.size.height,
-             container.bounds.size.width, container.bounds.size.height);
-        KZDumpIvars(container, [NSString stringWithFormat:@"pv%d", idx]);
-        KZDumpTree(view, [NSString stringWithFormat:@"pv%d", idx], 0);
-        __weak UIView *wv = view;
-        __weak UIView *wc = container;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            PLog(@"[pv#%d] later: %@ %.1fx%.1f container=%.1fx%.1f", idx,
-                 NSStringFromClass([wv class]), wv.frame.size.width, wv.frame.size.height,
-                 wc.bounds.size.width, wc.bounds.size.height);
-        });
+    if (view) {
+        if (!gSeen) gSeen = [NSMutableSet set];
+        UIView *container = (UIView *)self;
+        NSString *key = [NSString stringWithFormat:@"%p", container];
+        if (![gSeen containsObject:key] && gSeen.count < 8) {
+            [gSeen addObject:key];
+            PLog(@"[setPV] %@ provided=%@", NSStringFromClass([container class]), NSStringFromClass([view class]));
+        }
     }
     if (origSetPV) origSetPV(self, _cmd, view);
 }
 
-static BOOL gInstalled = NO;
-
+static BOOL gHook1 = NO, gHook2 = NO;
 static void KZTryInstall(void) {
-    if (gInstalled) return;
     Class c = NSClassFromString(@"_SAUIProvidedViewContainerView");
     if (!c) return;
-    MSHookMessageEx(c, @selector(setProvidedView:), (IMP)KZSetPV, (IMP *)&origSetPV);
-    gInstalled = YES;
-    PLog(@"[hook] 已挂钩 %@ setProvidedView:", NSStringFromClass(c));
+    if (!gHook1) {
+        MSHookMessageEx(c, @selector(setProvidedView:), (IMP)KZSetPV, (IMP *)&origSetPV);
+        gHook1 = YES;
+        PLog(@"[hook] setProvidedView: ok");
+    }
+    if (!gHook2) {
+        MSHookMessageEx(c, @selector(didMoveToWindow), (IMP)KZDidMove, (IMP *)&origDidMove);
+        gHook2 = YES;
+        PLog(@"[hook] didMoveToWindow ok");
+    }
 }
 
 %ctor {
-    PLog(@"ctor v0.5 (dynamic hook)");
+    PLog(@"ctor v0.8");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
-            KZTryInstall();
-        }];
+        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { KZTryInstall(); }];
     });
 }
