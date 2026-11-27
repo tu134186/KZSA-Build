@@ -68,6 +68,22 @@ static double KZPrefNum(NSString *key, double dflt) {
     return d > 0 ? d : dflt;
 }
 
+static BOOL KZPrefBool(NSString *key, BOOL dflt) {
+    CFPropertyListRef v = CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR(KZ_PREF_DOMAIN));
+    if (!v) return dflt;
+    BOOL b = [(__bridge NSNumber *)v boolValue];
+    CFRelease(v);
+    return b;
+}
+
+static double KZPrefDouble(NSString *key, double dflt) {
+    CFPropertyListRef v = CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR(KZ_PREF_DOMAIN));
+    if (!v) return dflt;
+    double d = [(__bridge NSNumber *)v doubleValue];
+    CFRelease(v);
+    return d;
+}
+
 static UIImage *KZUserImage(void) {
     NSString *b64 = KZPrefStr(@"eyeImage");
     if (b64.length < 200) return nil;
@@ -157,16 +173,19 @@ static void KZTryReplace(UIView *container) {
 
     CGRect b = pv.bounds;
     BOOL narrow = (b.size.height - b.size.width) > 1.5;
-    gUseDuck = !narrow;   // 窄槽（左侧贴边）放写轮眼，方槽（独立圆）放小鸭子
+    if (narrow && !KZPrefBool(@"leftOn", YES)) return;
+    if (!narrow && !KZPrefBool(@"rightOn", YES)) return;
+    gUseDuck = !narrow;
     PLog(@"[slot] %.0fx%.0f -> %@", b.size.width, b.size.height, narrow ? @"写轮眼" : @"小鸭子");
     CGFloat side = MIN(b.size.width, b.size.height);
     if (side < 4) side = 22;
-    double scale = KZPrefNum(@"scale", 1.0);
-    if (scale < 0.4) scale = 1.0;
+    double scale = narrow ? KZPrefDouble(@"scale", 1.0) : KZPrefDouble(@"scaleR", 0.95);
+    if (scale < 0.3) scale = 1.0;
     side = side * scale;
+    double offx = narrow ? KZPrefDouble(@"offX", 0.0) : KZPrefDouble(@"offXR", 0.0);
     UIView *eye = KZEye(CGRectMake(0, 0, side, side));
     eye.tag = 0x4B5A;
-    eye.frame = CGRectMake((b.size.width - side) / 2.0, (b.size.height - side) / 2.0, side, side);
+    eye.frame = CGRectMake((b.size.width - side) / 2.0 + offx, (b.size.height - side) / 2.0, side, side);
     eye.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin |
                            UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
     [pv addSubview:eye];
@@ -271,7 +290,7 @@ static UIView *(*origTrailView)(id, SEL);
 static UIView *myTrailView(id self, SEL _cmd) {
     UIView *orig = origTrailView ? origTrailView(self, _cmd) : nil;
     NSString *eid = KZElemId(self);
-    if ([eid.lowercaseString containsString:@"screenrecording"]) {
+    if ([eid.lowercaseString containsString:@"screenrecording"] && KZPrefBool(@"rightOn", YES)) {
         KZTrailLog(@"trailingView");
         return KZDuckView();
     }
@@ -282,7 +301,7 @@ static UIView *(*origExpTrailView)(id, SEL);
 static UIView *myExpTrailView(id self, SEL _cmd) {
     UIView *orig = origExpTrailView ? origExpTrailView(self, _cmd) : nil;
     NSString *eid = KZElemId(self);
-    if ([eid.lowercaseString containsString:@"screenrecording"]) {
+    if ([eid.lowercaseString containsString:@"screenrecording"] && KZPrefBool(@"rightOn", YES)) {
         KZTrailLog(@"expandedTrailingView");
         return KZDuckView();
     }
@@ -367,7 +386,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.10 (trailing view)");
+    PLog(@"ctor v1.11 (prefs panel)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
