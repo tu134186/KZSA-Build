@@ -70,7 +70,8 @@ static UIView *KZEye(CGRect frame) {
         return v;
     }
     UIImageView *iv = [[UIImageView alloc] initWithImage:img];
-    iv.frame = v.bounds;
+    CGFloat pad = v.bounds.size.width * 0.032;
+    iv.frame = CGRectInset(v.bounds, -pad, -pad);
     iv.contentMode = UIViewContentModeScaleAspectFill;
     iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [v addSubview:iv];
@@ -119,10 +120,14 @@ static void KZTryReplace(UIView *container) {
     UIView *pv = (UIView *)provided;
     if ([pv viewWithTag:0x4B5A]) return;
 
-    UIView *eye = KZEye(pv.bounds);
+    CGRect b = pv.bounds;
+    CGFloat side = MIN(b.size.width, b.size.height);
+    if (side < 4) side = 22;
+    UIView *eye = KZEye(CGRectMake(0, 0, side, side));
     eye.tag = 0x4B5A;
-    eye.frame = pv.bounds;
-    eye.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    eye.frame = CGRectMake((b.size.width - side) / 2.0, (b.size.height - side) / 2.0, side, side);
+    eye.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin |
+                           UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
     [pv addSubview:eye];
     [pv bringSubviewToFront:eye];
     PLog(@"[add] 已附加到 %@ %.0fx%.0f subviews=%lu", NSStringFromClass([pv class]),
@@ -165,7 +170,7 @@ static void KZTryInstall(void) {
 }
 
 %ctor {
-    PLog(@"ctor v1.4 (attach subview)");
+    PLog(@"ctor v1.5 (circle)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { KZTryInstall(); }];
     });
