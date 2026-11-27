@@ -4,6 +4,7 @@
 #import <substrate.h>
 #import <objc/runtime.h>
 #import <stdarg.h>
+#import "kzeye_b64.h"
 
 #define KZ_DOMAIN "com.minis.kzprobe"
 #define KZ_EYE @"/Library/KZTheme/eye/tomoe2.png"
@@ -62,7 +63,13 @@ static UIView *KZEye(CGRect frame) {
     v.layer.masksToBounds = YES;
     v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
-    UIImage *img = [UIImage imageWithContentsOfFile:KZ_EYE];
+    UIImage *img = nil;
+    {
+        NSData *d = [[NSData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:kKZeyeB64]
+                                                        options:NSDataBase64DecodingIgnoreUnknownCharacters];
+        if (d.length > 200) img = [UIImage imageWithData:d];
+    }
+    if (!img) img = [UIImage imageWithContentsOfFile:KZ_EYE];
     if (!img) img = [UIImage imageWithContentsOfFile:KZ_EYE_ALT];
     if (!img) {
         PLog(@"[img] 读不到素材");
@@ -103,7 +110,7 @@ static BOOL KZIsRecording(UIView *container) {
 static void (*origSetPV)(id, SEL, UIView *) = NULL;
 static void KZSetPV(id self, SEL _cmd, UIView *view) {
     UIView *container = (UIView *)self;
-    if (KZIsRecording(container)) {
+    if (KZIsRecording(container) && container.bounds.size.width >= 4) {
         if (!gLogged) gLogged = [NSMutableSet set];
         NSString *k = [NSString stringWithFormat:@"pv-%p", container];
         if (![gLogged containsObject:k]) {
@@ -122,6 +129,7 @@ static void KZDidMove(id self, SEL _cmd) {
     UIView *container = (UIView *)self;
     if (!container.window) return;
     if (!KZIsRecording(container)) return;
+    if (container.bounds.size.width < 4) return;
 
     if (!gLogged) gLogged = [NSMutableSet set];
     NSString *k = [NSString stringWithFormat:@"dm-%p", container];
@@ -149,7 +157,7 @@ static void KZTryInstall(void) {
 }
 
 %ctor {
-    PLog(@"ctor v1.0 (replace)");
+    PLog(@"ctor v1.1 (embedded eye)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { KZTryInstall(); }];
     });
