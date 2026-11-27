@@ -356,21 +356,16 @@ static UIView *myExpLeadView(id self, SEL _cmd) {
 static UIView *(*origTrailView)(id, SEL);
 static UIView *myTrailView(id self, SEL _cmd) {
     UIView *orig = origTrailView ? origTrailView(self, _cmd) : nil;
-    NSString *eid = KZElemId(self);
-    // v1.15：鸭子暂时关闭
     return orig;
 }
 
 static UIView *(*origExpTrailView)(id, SEL);
 static UIView *myExpTrailView(id self, SEL _cmd) {
     UIView *orig = origExpTrailView ? origExpTrailView(self, _cmd) : nil;
-    NSString *eid = KZElemId(self);
-    // v1.15：鸭子暂时关闭
     return orig;
 }
 
 static BOOL gH1 = NO, gH2 = NO, gH3 = NO, gH4 = NO, gH5 = NO;
-static BOOL gLeadMissing = NO;
 static void KZInstallModeHooks(void) {
     Class c = NSClassFromString(@"SBSystemApertureSceneElement");
     if (!c) return;
