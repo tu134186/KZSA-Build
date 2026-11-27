@@ -5,6 +5,8 @@
 #import <Preferences/PSTableCell.h>
 #import <notify.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#include <spawn.h>
+extern char **environ;
 
 #define KZ_DOMAIN @"com.minis.kzsa"
 #define KZ_NOTIFY "com.minis.kzsa.changed"
@@ -244,7 +246,9 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
 }
 
 - (void)respring {
-    system("killall -9 SpringBoard");
+    pid_t pid = 0;
+    char *argv[] = { "/usr/bin/killall", "-9", "SpringBoard", NULL };
+    posix_spawn(&pid, "/usr/bin/killall", NULL, NULL, argv, environ);
 }
 
 - (void)resetAll {
