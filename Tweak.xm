@@ -138,9 +138,15 @@ static void KZTryReplace(UIView *container) {
     }
 }
 
+static NSMutableSet *gScheduled = nil;
 static void KZScheduleReplace(UIView *container) {
+    if (!container) return;
+    if (!gScheduled) gScheduled = [NSMutableSet set];
+    NSString *k = [NSString stringWithFormat:@"%p", container];
+    if ([gScheduled containsObject:k]) return;
+    [gScheduled addObject:k];
     __weak UIView *wc = container;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         KZTryReplace(wc);
     });
 }
