@@ -102,10 +102,14 @@ static UIView *KZEyeView(void) {
     return v;
 }
 
+@interface _SAUIProvidedViewContainerView : UIView
+- (void)setProvidedView:(UIView *)view;
+@end
+
 %hook _SAUIProvidedViewContainerView
 
 - (void)setProvidedView:(UIView *)view {
-    NSString *ctx = KZContext(self);
+    NSString *ctx = KZContext((UIView *)self);
     NSString *key = [NSString stringWithFormat:@"%p|%@|%@", self, NSStringFromClass([view class]), ctx];
     if (!gSeenCtx) gSeenCtx = [NSMutableSet set];
     if (ctx.length && ![gSeenCtx containsObject:key]) {
