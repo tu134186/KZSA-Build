@@ -5,6 +5,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <stdarg.h>
+#import "kzeye_b64.h"
 
 #define KZ_DOMAIN "com.minis.kzprobe"
 
@@ -26,6 +27,7 @@ static void PLog(NSString *fmt, ...) {
 static id gManager = nil;
 static id gProvider = nil;
 static __unsafe_unretained id gActivityHost = nil;
+static __unsafe_unretained id gElementHost = nil;
 static BOOL gLaunched = NO;
 static double gLaunchAt = 0;
 static double gCtorAt = 0;
@@ -114,13 +116,27 @@ static void kzPromote(id self, SEL _cmd) {
 - (NSString *)identifier { return @"KZSharinganElement"; }
 - (NSString *)description { return @"KZSharinganElement"; }
 
+static UIImage *KZEyeImage(void) {
+    static UIImage *img = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSData *d = [[NSData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:kKZeyeB64]
+                                                        options:NSDataBase64DecodingIgnoreUnknownCharacters];
+        if (d) img = [UIImage imageWithData:d];
+        if (!img) img = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe2.png"];
+        if (!img) img = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe.png"];
+        PLog(@"[prov] eye image = %@", img ? [NSString stringWithFormat:@"%.0fx%.0f", img.size.width, img.size.height] : @"nil");
+    });
+    return img;
+}
+
 - (UIView *)kzMakeView {
     UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
     v.backgroundColor = [UIColor blackColor];
     v.layer.cornerRadius = 11.0;
     v.layer.masksToBounds = YES;
-    UIImage *img = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe2.png"];
-    if (!img) img = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe.png"];
+    UIImage *img = KZEyeImage();
+    if (!img) v.backgroundColor = [UIColor redColor];
     if (img) {
         UIImageView *iv = [[UIImageView alloc] initWithImage:img];
         iv.frame = v.bounds;
@@ -153,7 +169,8 @@ static void kzPromote(id self, SEL _cmd) {
 // 下面是 SAUILayoutSpecifying 里的结构化返回方法：不显式实现的话，
 // forwardInvocation 会用 "@@:" 顶替，返回结构体时长度不匹配会崩（1.27 补）
 - (CGSize)sizeThatFitsSize:(CGSize)size forProvidedView:(UIView *)view inLayoutMode:(NSInteger)mode {
-    PLog(@"[prov] sizeThatFits %.0fx%.0f mode=%ld", size.width, size.height, (long)mode);
+    if (size.width > 10000.0 || size.height > 10000.0) PLog(@"[prov] sizeThatFits inf mode=%ld", (long)mode);
+    else PLog(@"[prov] sizeThatFits %.0fx%.0f mode=%ld", size.width, size.height, (long)mode);
     return CGSizeMake(22, 22);
 }
 - (BOOL)isProvidedViewConcentric:(UIView *)view inLayoutMode:(NSInteger)mode { return YES; }
@@ -171,6 +188,8 @@ static void kzPromote(id self, SEL _cmd) {
 - (BOOL)hasActivityBehavior { PLog(@"[prov] hasActivityBehavior"); return YES; }
 - (BOOL)hasAlertBehavior { return NO; }
 - (id)activityHost { return gActivityHost; }
+- (id)elementHost { return gElementHost; }
+- (void)setElementHost:(id)host { gElementHost = host; PLog(@"[prov] setElementHost %@", host ? NSStringFromClass([host class]) : @"nil"); }
 - (void)setActivityHost:(id)host { gActivityHost = host; PLog(@"[prov] setActivityHost %@", host ? NSStringFromClass([host class]) : @"nil"); }
 
 // SAElement 要求 viewProvider；SAElementViewProviding 要求 element —— 两个都必须返回 self，
@@ -335,6 +354,8 @@ static void KZRegisterOnce(void) {
             if ([gManager respondsToSelector:inval]) {
                 @try { ((void(*)(id,SEL))objc_msgSend)(gManager, inval); PLog(@"[reg] invalidate 已调用"); }
                 @catch (NSException *e) { PLog(@"[reg] invalidate 异常"); }
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZReportOrder(); });
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZReportOrder(); });
             }
     } @catch (NSException *e) {
         PLog(@"[reg] 异常: %@", e.reason);
@@ -380,6 +401,26 @@ static void KZTryHook(void) {
     }
 }
 
+static void KZReportOrder(void) {
+    if (!gManager) return;
+    @try {
+        SEL s = NSSelectorFromString(@"orderedElementViewControllers");
+        if (![gManager respondsToSelector:s]) { PLog(@"[reg] orderedVC 方法不存在"); return; }
+        NSArray *vcs = ((id (*)(id, SEL))objc_msgSend)(gManager, s);
+        NSMutableString *m = [NSMutableString string];
+        for (id vc in vcs) {
+            @try {
+                SEL evp = NSSelectorFromString(@"elementViewProvider");
+                id vp = [vc respondsToSelector:evp] ? ((id (*)(id, SEL))objc_msgSend)(vc, evp) : nil;
+                SEL es = NSSelectorFromString(@"element");
+                id el = (vp && [vp respondsToSelector:es]) ? ((id (*)(id, SEL))objc_msgSend)(vp, es) : nil;
+                [m appendFormat:@"%@ ", KZElemID(el)];
+            } @catch (NSException *e) { [m appendString:@"? "]; }
+        }
+        PLog(@"[reg] orderedVC=%lu ids=%@", (unsigned long)vcs.count, m);
+    } @catch (NSException *e) { PLog(@"[reg] orderedVC 异常 %@", e.reason); }
+}
+
 // 定期把能力检查写一次（只读，不调用）
 static void KZReport(void) {
     if (!gManager) return;
@@ -410,7 +451,7 @@ static void KZReport(void) {
 
 %ctor {
     gCtorAt = CACurrentMediaTime();
-    PLog(@"ctor v1.29 (activity behavior)");
+    PLog(@"ctor v1.30 (visible + order diag)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
