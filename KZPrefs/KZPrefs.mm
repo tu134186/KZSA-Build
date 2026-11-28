@@ -4,10 +4,9 @@
 #import <Preferences/PSSpecifier.h>
 #import <Preferences/PSTableCell.h>
 #import <notify.h>
+#import <objc/message.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "kzpresets_b64.h"
-#include <spawn.h>
-extern char **environ;
 
 #define KZ_DOMAIN @"com.minis.kzsa"
 #define KZ_NOTIFY "com.minis.kzsa.changed"
@@ -35,7 +34,7 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
 - (void)setCellClass:(Class)cls;
 @end
 
-#pragma mark - 一行：标签 + − 滑块 + 数值
+#pragma mark - 滑块行
 
 @interface KZStepperCell : PSTableCell
 @end
@@ -148,8 +147,7 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
 
 @end
 
-
-#pragma mark - 一行：素材缩略图（点一下立即替换）
+#pragma mark - 素材选择（两行网格）
 
 static UIImage *KZPBase64(const char *b64) {
     if (!b64) return nil;
@@ -158,25 +156,26 @@ static UIImage *KZPBase64(const char *b64) {
     return d.length > 200 ? [UIImage imageWithData:d] : nil;
 }
 
+static NSArray *_kzPresetCache = nil;
+
+static void KZPresetInvalidateCache(void) { _kzPresetCache = nil; }
+
 static NSArray<UIImage *> *KZPresetImages(void) {
-    static NSArray *imgs = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSMutableArray *a = [NSMutableArray array];
-        for (int i = 0; i < kKZPresetCount; i++) {
-            UIImage *u = KZPBase64(kKZPresetB64[i]);
-            [a addObject:u ?: [UIImage new]];
-        }
-        NSString *b64 = KZPrefStr(@"eyeImage");
-        UIImage *custom = nil;
-        if (b64.length > 200) {
-            NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
-            if (d.length > 200) custom = [UIImage imageWithData:d];
-        }
-        [a addObject:custom ?: [UIImage new]];
-        imgs = a;
-    });
-    return imgs;
+    if (_kzPresetCache) return _kzPresetCache;
+    NSMutableArray *a = [NSMutableArray array];
+    for (int i = 0; i < kKZPresetCount; i++) {
+        UIImage *u = KZPBase64(kKZPresetB64[i]);
+        [a addObject:u ?: [UIImage new]];
+    }
+    NSString *b64 = KZPrefStr(@"eyeImage");
+    UIImage *custom = nil;
+    if (b64.length > 200) {
+        NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
+        if (d.length > 200) custom = [UIImage imageWithData:d];
+    }
+    [a addObject:custom ?: [UIImage new]];
+    _kzPresetCache = a;
+    return a;
 }
 
 static NSArray<NSString *> *KZPresetNames(void) {
@@ -186,11 +185,12 @@ static NSArray<NSString *> *KZPresetNames(void) {
     return a;
 }
 
+static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200; }
+
 @interface KZPresetCell : PSTableCell
 @end
 
 @implementation KZPresetCell {
-    UIScrollView *_scroll;
     NSMutableArray<UIButton *> *_btns;
 }
 
@@ -200,10 +200,7 @@ static NSArray<NSString *> *KZPresetNames(void) {
     self = [super initWithStyle:style reuseIdentifier:reuseIdentifier specifier:specifier];
     if (self) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
-        _scroll = [[UIScrollView alloc] init];
-        _scroll.showsHorizontalScrollIndicator = NO;
-        _scroll.alwaysBounceHorizontal = YES;
-        [self.contentView addSubview:_scroll];
+        self.backgroundColor = [UIColor clearColor];
         _btns = [NSMutableArray array];
 
         NSArray<UIImage *> *imgs = KZPresetImages();
@@ -211,21 +208,29 @@ static NSArray<NSString *> *KZPresetNames(void) {
         for (NSInteger i = 0; i < imgs.count; i++) {
             UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
             b.tag = i;
-            b.layer.cornerRadius = 19;
+            b.layer.cornerRadius = 24;
             b.layer.masksToBounds = YES;
             b.backgroundColor = [UIColor blackColor];
             b.imageView.contentMode = UIViewContentModeScaleAspectFill;
             [b setImage:imgs[i] forState:UIControlStateNormal];
-            [b addTarget:self action:@selector(pick:) forControlEvents:UIControlEventTouchUpInside];
+
             UILabel *lb = [[UILabel alloc] init];
             lb.text = names[i];
-            lb.font = [UIFont systemFontOfSize:9];
+            lb.font = [UIFont systemFontOfSize:10 weight:UIFontWeightRegular];
             lb.textColor = [UIColor secondaryLabelColor];
             lb.textAlignment = NSTextAlignmentCenter;
             lb.tag = 100;
+            lb.userInteractionEnabled = NO;
             [b addSubview:lb];
-            [_scroll addSubview:b];
+
+            // 用外层包装实现「缩略图 + 下面文字」一起点击
+            UIControl *wrap = [[UIControl alloc] init];
+            wrap.tag = i;
+            [wrap addSubview:b];
+            [wrap addTarget:self action:@selector(pickWrap:) forControlEvents:UIControlEventTouchUpInside];
+            [self.contentView addSubview:wrap];
             [_btns addObject:b];
+            b.userInteractionEnabled = NO;
         }
         [self refreshCellContentsWithSpecifier:specifier];
     }
@@ -240,15 +245,31 @@ static NSArray<NSString *> *KZPresetNames(void) {
         BOOL sel = (b.tag == cur);
         b.layer.borderWidth = sel ? 2.5 : 0.0;
         b.layer.borderColor = sel ? [UIColor systemBlueColor].CGColor : [UIColor clearColor].CGColor;
-        b.alpha = sel ? 1.0 : 0.75;
+        b.alpha = sel ? 1.0 : 0.85;
     }
 }
 
-- (void)pick:(UIButton *)b {
-    KZPrefSet(@"eyePreset", @(b.tag));
+- (void)pickWrap:(UIControl *)w {
+    NSInteger idx = w.tag;
+    if (idx == kKZPresetCount && !KZHasCustomImage()) {
+        // 没有自定义图时点「自定义」→ 直接去导入
+        [self sendActionToController:@"importPhoto"];
+        return;
+    }
+    KZPrefSet(@"eyePreset", @(idx));
     KZPost();
     [self refreshCellContentsWithSpecifier:self.specifier];
-    [[NSNotificationCenter defaultCenter] postNotificationName:@"KZPresetChanged" object:nil];
+}
+
+- (void)sendActionToController:(NSString *)sel {
+    UIResponder *r = self;
+    while (r && ![r isKindOfClass:[PSListController class]]) r = r.nextResponder;
+    if ([r isKindOfClass:[PSListController class]]) {
+        SEL s = NSSelectorFromString(sel);
+        if ([r respondsToSelector:s]) {
+            ((void (*)(id, SEL))objc_msgSend)(r, s);
+        }
+    }
 }
 
 - (void)setHighlighted:(BOOL)h animated:(BOOL)a { [super setHighlighted:NO animated:NO]; }
@@ -257,16 +278,27 @@ static NSArray<NSString *> *KZPresetNames(void) {
     [super layoutSubviews];
     self.textLabel.hidden = YES;
     self.detailTextLabel.hidden = YES;
+
     CGRect b = self.contentView.bounds;
-    _scroll.frame = CGRectMake(8, 4, b.size.width - 16, b.size.height - 8);
-    CGFloat x = 4, side = 38, gap = 10;
-    for (UIButton *btn in _btns) {
-        btn.frame = CGRectMake(x, 2, side, side);
+    CGFloat pad = 12;
+    CGFloat cols = 5;
+    CGFloat avail = b.size.width - pad * 2;
+    CGFloat gap = 8;
+    CGFloat cellW = (avail - gap * (cols - 1)) / cols;
+    CGFloat thumb = MIN(48.0, cellW);
+
+    for (NSInteger i = 0; i < (NSInteger)_btns.count; i++) {
+        UIButton *btn = _btns[i];
+        UIControl *wrap = (UIControl *)btn.superview;
+        NSInteger row = i / (NSInteger)cols;
+        NSInteger col = i % (NSInteger)cols;
+        CGFloat x = pad + col * (cellW + gap);
+        CGFloat y = 6 + row * 72;
+        wrap.frame = CGRectMake(x, y, cellW, 66);
+        btn.frame = CGRectMake((cellW - thumb) / 2.0, 0, thumb, thumb);
         UILabel *lb = [btn viewWithTag:100];
-        lb.frame = CGRectMake(-8, side + 1, side + 16, 13);
-        x += side + gap;
+        lb.frame = CGRectMake(-4, thumb + 4, cellW + 8, 13);
     }
-    _scroll.contentSize = CGSizeMake(x, _scroll.bounds.size.height);
 }
 
 @end
@@ -282,36 +314,20 @@ static NSArray<NSString *> *KZPresetNames(void) {
     if (_specifiers == nil) {
         _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
         Class stepper = NSClassFromString(@"KZStepperCell");
+        Class preset = NSClassFromString(@"KZPresetCell");
         for (PSSpecifier *s in _specifiers) {
             if ([s propertyForKey:@"action"]) [s setTarget:self];
             if ([s propertyForKey:@"step"] && stepper) {
                 [s setProperty:stepper forKey:@"cellClass"];
                 if ([s respondsToSelector:@selector(setCellClass:)]) [s setCellClass:stepper];
             }
-            if ([s propertyForKey:@"presetPicker"]) {
-                Class pc = NSClassFromString(@"KZPresetCell");
-                if (pc) {
-                    [s setProperty:pc forKey:@"cellClass"];
-                    if ([s respondsToSelector:@selector(setCellClass:)]) [s setCellClass:pc];
-                }
+            if ([s propertyForKey:@"presetPicker"] && preset) {
+                [s setProperty:preset forKey:@"cellClass"];
+                if ([s respondsToSelector:@selector(setCellClass:)]) [s setCellClass:preset];
             }
         }
-        [self decorate];
     }
     return _specifiers;
-}
-
-- (void)decorate {
-    NSInteger p = (NSInteger)round([KZPrefStr(@"eyePreset") doubleValue]);
-    NSArray<NSString *> *names = KZPresetNames();
-    if (p < 0 || p >= (NSInteger)names.count) p = 0;
-    NSString *txt = names[p];
-    if (p == kKZPresetCount && KZPrefStr(@"eyeImage").length < 200) txt = @"自定义（未导入，用第 1 套）";
-    for (PSSpecifier *s in self.specifiers) {
-        if ([[s propertyForKey:@"key"] isEqualToString:@"eyeName"]) {
-            [s setName:[NSString stringWithFormat:@"当前：%@", txt]];
-        }
-    }
 }
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
@@ -328,8 +344,11 @@ static NSArray<NSString *> *KZPresetNames(void) {
     return v;
 }
 
-- (void)storeImage:(UIImage *)img {
-    if (!img || !img.CGImage) return;
+#pragma mark 导入 / 删除自定义素材
+
+- (UIImage *)normalizeImage:(UIImage *)img {
+    if (!img || !img.CGImage) return nil;
+    // 先转正
     UIImage *norm = img;
     if (img.imageOrientation != UIImageOrientationUp) {
         UIGraphicsBeginImageContextWithOptions(img.size, NO, 1.0);
@@ -338,23 +357,42 @@ static NSArray<NSString *> *KZPresetNames(void) {
         UIGraphicsEndImageContext();
     }
     CGImageRef cg = norm.CGImage;
-    if (!cg) return;
+    if (!cg) return nil;
     size_t w = CGImageGetWidth(cg), h = CGImageGetHeight(cg);
     size_t side = w < h ? w : h;
     CGImageRef sq = CGImageCreateWithImageInRect(cg, CGRectMake((double)(w - side) / 2.0, (double)(h - side) / 2.0, (double)side, (double)side));
-    if (!sq) return;
+    if (!sq) return nil;
     UIImage *sqImg = [UIImage imageWithCGImage:sq scale:1.0 orientation:UIImageOrientationUp];
     CGImageRelease(sq);
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(320, 320), NO, 1.0);
-    [sqImg drawInRect:CGRectMake(0, 0, 320, 320)];
+
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(256, 256), YES, 1.0);
+    [[UIColor blackColor] setFill];
+    UIRectFill(CGRectMake(0, 0, 256, 256));
+    [sqImg drawInRect:CGRectMake(0, 0, 256, 256)];
     UIImage *out = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    NSData *png = UIImagePNGRepresentation(out ?: sqImg);
-    if (!png) return;
-    KZPrefSet(@"eyeImage", [png base64EncodedStringWithOptions:0]);
-    KZPost();
-    [self decorate];
-    [self.tableView reloadData];
+    return out ?: sqImg;
+}
+
+- (void)storeImage:(UIImage *)img {
+    @try {
+        UIImage *out = [self normalizeImage:img];
+        if (!out) return;
+        NSData *jpeg = UIImageJPEGRepresentation(out, 0.88);
+        NSData *png = UIImagePNGRepresentation(out);
+        NSData *use = (jpeg && jpeg.length < png.length) ? jpeg : png;
+        if (!use || use.length > 400 * 1024) {
+            use = UIImageJPEGRepresentation(out, 0.6);
+        }
+        if (!use) return;
+        KZPrefSet(@"eyeImage", [use base64EncodedStringWithOptions:0]);
+        KZPrefSet(@"eyePreset", @(kKZPresetCount));   // 自动切到「自定义」
+        KZPost();
+        KZPresetInvalidateCache();
+        [self reloadSpecifiers];
+    } @catch (NSException *e) {
+        // 静默失败，不让设置进程崩
+    }
 }
 
 - (void)importPhoto {
@@ -373,46 +411,28 @@ static NSArray<NSString *> *KZPresetNames(void) {
     [picker dismissViewControllerAnimated:YES completion:nil];
 }
 
-- (void)importFile {
-    UIDocumentPickerViewController *dp = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[ UTTypePNG, UTTypeImage ]];
-    dp.delegate = self;
-    dp.allowsMultipleSelection = NO;
-    [self presentViewController:dp animated:YES completion:nil];
+- (void)deleteCustom {
+    KZPrefClear(@"eyeImage");
+    NSInteger cur = (NSInteger)round([KZPrefStr(@"eyePreset") doubleValue]);
+    if (cur == kKZPresetCount) KZPrefSet(@"eyePreset", @(0));
+    KZPost();
+    KZPresetInvalidateCache();
+    [self reloadSpecifiers];
 }
 
-- (void)documentPicker:(UIDocumentPickerViewController *)c didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    NSURL *u = urls.firstObject;
-    if (!u) return;
-    BOOL ok = [u startAccessingSecurityScopedResource];
-    NSData *d = [NSData dataWithContentsOfURL:u];
-    if (ok) [u stopAccessingSecurityScopedResource];
-    if (d) [self storeImage:[UIImage imageWithData:d]];
-}
-
-- (void)openFolder {
-    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"shareddocuments:///Library/KZTheme"]
-                                       options:@{} completionHandler:nil];
-}
-
-- (void)respring {
-    pid_t pid = 0;
-    char *argv[] = { (char *)"/usr/bin/killall", (char *)"-9", (char *)"SpringBoard", NULL };
-    posix_spawn(&pid, "/usr/bin/killall", NULL, NULL, argv, environ);
-}
+#pragma mark 其它
 
 - (void)resetAll {
     KZPrefClear(@"eyeImage");
     KZPrefClear(@"scale");
-    KZPrefClear(@"scaleR");
     KZPrefClear(@"offX");
-    KZPrefClear(@"offXR");
+    KZPrefClear(@"offY");
     KZPrefClear(@"duration");
     KZPrefClear(@"eyePreset");
-    KZPrefClear(@"offY");
     KZPrefClear(@"enabled");
     KZPost();
-    [self decorate];
-    [self.tableView reloadData];
+    KZPresetInvalidateCache();
+    [self reloadSpecifiers];
 }
 
 - (void)applyNow { KZPost(); }
