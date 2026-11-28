@@ -180,8 +180,8 @@ static UIImage *KZEyeImage(void) {
 }
 - (UIView *)expandedTrailingView { return nil; }
 
-- (NSInteger)preferredLayoutMode { PLog(@"[prov] preferredLayoutMode"); return 2; }
-- (NSInteger)maximumSupportedLayoutMode { PLog(@"[prov] maxLayoutMode"); return 3; }
+- (NSInteger)preferredLayoutMode { PLog(@"[prov] preferredLayoutMode"); return 1; }
+- (NSInteger)maximumSupportedLayoutMode { PLog(@"[prov] maxLayoutMode"); return 1; }
 - (NSInteger)minimumSupportedLayoutMode { return 0; }
 - (NSInteger)minimumLayoutMode { return 0; }
 - (NSInteger)layoutMode { return 2; }
@@ -530,7 +530,7 @@ static void KZReport(void) {
 
 %ctor {
     gCtorAt = CACurrentMediaTime();
-    PLog(@"ctor v1.32 (view diag)");
+    PLog(@"ctor v1.33 (compact only)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
