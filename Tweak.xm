@@ -280,16 +280,17 @@ static void KZInstall(void) {
     Class c = NSClassFromString(@"SBSystemApertureSceneElement");
     if (!c) { KZOnce(@"noclass", @"[hook] 找不到 SBSystemApertureSceneElement"); return; }
     int n = 0;
-    void (^h)(const char *, IMP, IMP *) = ^(const char *selName, IMP imp, IMP *orig) {
-        SEL s = NSSelectorFromString([NSString stringWithUTF8String:selName]);
-        if ([c instancesRespondToSelector:s]) { MSHookMessageEx(c, s, imp, orig); n++; }
-    };
-    h("leadingView", (IMP)kzLeading, (IMP *)&origLeading);
-    h("expandedLeadingView", (IMP)kzExpLeading, (IMP *)&origExpLeading);
-    h("minimalView", (IMP)kzMinimal, (IMP *)&origMinimal);
-    h("preferredLayoutMode", (IMP)kzPref, (IMP *)&origPref);
-    h("maximumSupportedLayoutMode", (IMP)kzMax, (IMP *)&origMax);
-    if (n) { gHooked = YES; PLog(@"[hook] hook 了 %d 个方法（leader/minimal/pref/max）", n); }
+    SEL s1 = NSSelectorFromString(@"leadingView");
+    SEL s2 = NSSelectorFromString(@"expandedLeadingView");
+    SEL s3 = NSSelectorFromString(@"minimalView");
+    SEL s4 = NSSelectorFromString(@"preferredLayoutMode");
+    SEL s5 = NSSelectorFromString(@"maximumSupportedLayoutMode");
+    if ([c instancesRespondToSelector:s1]) { MSHookMessageEx(c, s1, (IMP)kzLeading, (IMP *)&origLeading); n++; }
+    if ([c instancesRespondToSelector:s2]) { MSHookMessageEx(c, s2, (IMP)kzExpLeading, (IMP *)&origExpLeading); n++; }
+    if ([c instancesRespondToSelector:s3]) { MSHookMessageEx(c, s3, (IMP)kzMinimal, (IMP *)&origMinimal); n++; }
+    if ([c instancesRespondToSelector:s4]) { MSHookMessageEx(c, s4, (IMP)kzPref, (IMP *)&origPref); n++; }
+    if ([c instancesRespondToSelector:s5]) { MSHookMessageEx(c, s5, (IMP)kzMax, (IMP *)&origMax); n++; }
+    if (n) { gHooked = YES; PLog(@"[hook] hook 了 %d 个方法（leading/minimal/pref/max）", n); }
 }
 
 #pragma mark - 保活 / 清理
