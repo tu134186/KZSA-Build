@@ -23,7 +23,9 @@ static void PLog(NSString *fmt, ...) {
 }
 
 static id gManager = nil;
+static id gProvider = nil;
 static void KZRegisterOnce(void);
+static void KZProbeAuthority(id mgr);
 static BOOL (*origNeg)(id, SEL, id);
 static BOOL kzNeg(id self, SEL _cmd, id elem);
 static id (*origElemVC)(id, SEL, id);
@@ -109,9 +111,33 @@ static void kzPromote(id self, SEL _cmd) {
 
 - (NSInteger)preferredLayoutMode { PLog(@"[prov] preferredLayoutMode"); return 2; }
 - (NSInteger)maximumSupportedLayoutMode { PLog(@"[prov] maxLayoutMode"); return 3; }
+- (NSInteger)minimumSupportedLayoutMode { return 0; }
 - (NSInteger)minimumLayoutMode { return 0; }
+- (NSInteger)layoutMode { return 2; }
+- (void)setLayoutMode:(NSInteger)mode reason:(NSInteger)reason {
+    PLog(@"[prov] setLayoutMode:%ld reason:%ld", (long)mode, (long)reason);
+}
+// 下面是 SAUILayoutSpecifying 里的结构化返回方法：不显式实现的话，
+// forwardInvocation 会用 "@@:" 顶替，返回结构体时长度不匹配会崩（1.27 补）
+- (CGSize)sizeThatFitsSize:(CGSize)size forProvidedView:(UIView *)view inLayoutMode:(NSInteger)mode {
+    PLog(@"[prov] sizeThatFits %.0fx%.0f mode=%ld", size.width, size.height, (long)mode);
+    return CGSizeMake(22, 22);
+}
+- (BOOL)isProvidedViewConcentric:(UIView *)view inLayoutMode:(NSInteger)mode { return YES; }
+- (BOOL)isInteractiveDismissalEnabled { return NO; }
+- (BOOL)isMinimalPresentationPossible { return YES; }
+- (BOOL)isRequestingMenuPresentation { return NO; }
+- (NSDirectionalEdgeInsets)preferredEdgeOutsetsForLayoutMode:(NSInteger)mode suggestedOutsets:(NSDirectionalEdgeInsets)suggested maximumOutsets:(NSDirectionalEdgeInsets)maximum {
+    return suggested;
+}
 
 - (NSString *)clientIdentifier { return @"com.minis.kzsa"; }
+
+// SAElement 要求 viewProvider；SAElementViewProviding 要求 element —— 两个都必须返回 self，
+// 否则 manager 拿到 nil 会直接跳过这个 element（1.27 补上）
+- (id)viewProvider { PLog(@"[prov] viewProvider"); return self; }
+- (id)element { PLog(@"[prov] element"); return self; }
+- (BOOL)_canShowWhileLocked { return YES; }
 
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
     return [NSMethodSignature signatureWithObjCTypes:"@@:"];
@@ -122,8 +148,96 @@ static void kzPromote(id self, SEL _cmd) {
 }
 @end
 
-static id gProvider = nil;
 static id gAssertion = nil;
+static __unsafe_unretained id gAuthority = nil;
+static id (*origElemVCC)(id, SEL, id, BOOL);
+static NSArray *(*origProbeOrder)(id, SEL, NSArray *, NSArray *);
+
+static NSString *KZElemID(id elem) {
+    @try {
+        SEL es = NSSelectorFromString(@"elementIdentifier");
+        if (elem && [elem respondsToSelector:es]) {
+            id v = ((id (*)(id, SEL))objc_msgSend)(elem, es);
+            if ([v isKindOfClass:[NSString class]]) return v;
+        }
+    } @catch (NSException *e) {}
+    return @"?";
+}
+
+// 1.27：authority 是 <SAElementConsidering>，它的 order 方法决定谁能进入 promoted 列表
+static NSArray *kzOrder(id self, SEL _cmd, NSArray *temporal, NSArray *prev) {
+    NSArray *r = temporal;
+    @try { if (origProbeOrder) r = origProbeOrder(self, _cmd, temporal, prev); } @catch (...) {}
+    BOOL inT = (gProvider && [temporal containsObject:gProvider]);
+    BOOL inR = (gProvider && [r containsObject:gProvider]);
+    PLog(@"[au] order temporal=%lu contains=%d out=%lu contains=%d",
+         (unsigned long)temporal.count, inT, (unsigned long)r.count, inR);
+    if (gProvider && !inR) {
+        @try {
+            r = [(r ?: @[]) arrayByAddingObject:gProvider];
+            PLog(@"[au] 追加 KZElement -> %lu", (unsigned long)r.count);
+        } @catch (NSException *e) { PLog(@"[au] 追加异常 %@", e.reason); }
+    }
+    return r;
+}
+
+static id kzElemVCC(id self, SEL _cmd, id elem, BOOL create) {
+    id r = nil;
+    @try { r = origElemVCC ? origElemVCC(self, _cmd, elem, create) : nil; } @catch (...) {}
+    PLog(@"[vc] _elemVC(%@) create=%d -> %@", KZElemID(elem), create, r ? NSStringFromClass([r class]) : @"nil");
+    return r;
+}
+
+static void KZProbeAuthority(id mgr) {
+    static BOOL done = NO;
+    if (done) return;
+    done = YES;
+    @try {
+        unsigned int ic = 0;
+        Ivar *ivs = class_copyIvarList([mgr class], &ic);
+        NSMutableString *s = [NSMutableString string];
+        for (unsigned i = 0; i < ic && i < 24; i++) {
+            const char *n = ivar_getName(ivs[i]);
+            [s appendFormat:@"%s ", n ? n : "?"];
+        }
+        if (ivs) free(ivs);
+        PLog(@"[au] manager(%s) ivars: %@", class_getName([mgr class]), s);
+
+        Ivar iv = class_getInstanceVariable([mgr class], "_elementAuthority");
+        id au = iv ? object_getIvar(mgr, iv) : nil;
+        PLog(@"[au] _elementAuthority = %@", au ? NSStringFromClass([au class]) : @"nil");
+        if (!au) {
+            iv = class_getInstanceVariable([mgr class], "_delegate");
+            au = iv ? object_getIvar(mgr, iv) : nil;
+            PLog(@"[au] _delegate = %@", au ? NSStringFromClass([au class]) : @"nil");
+        }
+        if (!au) return;
+        gAuthority = au;
+
+        unsigned int mc = 0;
+        Method *ms = class_copyMethodList([au class], &mc);
+        NSMutableString *m = [NSMutableString string];
+        for (unsigned i = 0; i < mc && i < 20; i++) [m appendFormat:@"%@ ", NSStringFromSelector(method_getName(ms[i]))];
+        if (ms) free(ms);
+        PLog(@"[au] methods(%u): %@", mc, m);
+
+        SEL os = NSSelectorFromString(@"elementsOrderedByPromotionFromTemporallyOrderedElements:withPreviousOrdering:");
+        if (class_getInstanceMethod([au class], os)) {
+            MSHookMessageEx([au class], os, (IMP)kzOrder, (IMP *)&origProbeOrder);
+            PLog(@"[au] hook order 成功");
+        } else {
+            PLog(@"[au] order 方法不存在");
+        }
+
+        SEL vcs = NSSelectorFromString(@"_elementViewControllerForElement:creatingIfNecessary:");
+        if (class_getInstanceMethod([mgr class], vcs)) {
+            MSHookMessageEx([mgr class], vcs, (IMP)kzElemVCC, (IMP *)&origElemVCC);
+            PLog(@"[vc] hook _elementVC 成功");
+        } else {
+            PLog(@"[vc] _elementVC 不存在");
+        }
+    } @catch (NSException *e) { PLog(@"[au] 异常 %@", e.reason); }
+}
 
 static void KZRegisterOnce(void) {
     static BOOL done = NO;
@@ -131,6 +245,7 @@ static void KZRegisterOnce(void) {
     done = YES;
     @try {
         gProvider = [[KZElementProvider alloc] init];
+        KZProbeAuthority(gManager);
         SEL reg = NSSelectorFromString(@"registerElement:");
         ((void (*)(id, SEL, id))objc_msgSend)(gManager, reg, gProvider);
         PLog(@"[reg] registerElement 完成");
@@ -138,6 +253,11 @@ static void KZRegisterOnce(void) {
         id a = ((id (*)(id, SEL, id))objc_msgSend)(gManager, as, gProvider);
         gAssertion = a;
         PLog(@"[reg] assertion = %@", a ? NSStringFromClass([a class]) : @"nil");
+        SEL rg = NSSelectorFromString(@"registeredElements");
+        if ([gManager respondsToSelector:rg]) {
+            NSArray *regs = ((id (*)(id, SEL))objc_msgSend)(gManager, rg);
+            PLog(@"[reg] registeredElements=%lu contains=%d authority=%d", (unsigned long)regs.count, [regs containsObject:gProvider], gAuthority != nil);
+        }
             SEL setL = NSSelectorFromString(@"setLayoutMode:reason:forTargetWithOverrider:");
             if ([gManager respondsToSelector:setL]) {
                 @try {
@@ -223,7 +343,7 @@ static void KZReport(void) {
 %end
 
 %ctor {
-    PLog(@"ctor v1.25 (authority probe)");
+    PLog(@"ctor v1.27 (authority ivar probe)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
