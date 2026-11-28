@@ -1,11 +1,13 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <CoreImage/CoreImage.h>
 #import <substrate.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <stdarg.h>
 #import "kzeye_b64.h"
+#import "kzduck_b64.h"
 
 #define KZ_DOMAIN "com.minis.kzprobe"
 #define KZ_PREF_DOMAIN "com.minis.kzsa"
@@ -59,25 +61,82 @@ static NSString *KZPrefStr(NSString *key) {
     return [v isKindOfClass:[NSString class]] ? v : nil;
 }
 
-static UIImage *KZEyeImage(void) {
-    NSString *b64 = KZPrefStr(@"eyeImage");
-    if (b64.length > 200) {
-        NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
-        if (d.length > 200) {
-            UIImage *u = [UIImage imageWithData:d];
-            if (u) return u;
+#pragma mark - 素材（内置多套 + 自定义导入）
+
+static UIImage *KZBase64Image(const char *b64) {
+    if (!b64) return nil;
+    NSData *d = [[NSData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:b64]
+                                                    options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    return d.length > 200 ? [UIImage imageWithData:d] : nil;
+}
+
+static UIImage *KZHueImage(UIImage *src, double hueTurn, double sat) {
+    if (!src.CGImage) return src;
+    if (fabs(hueTurn) < 0.001 && fabs(sat - 1.0) < 0.001) return src;
+    @try {
+        CIImage *ci = [CIImage imageWithCGImage:src.CGImage];
+        CIFilter *f = [CIFilter filterWithName:@"CIHueAdjust"];
+        if (!f) return src;
+        [f setValue:ci forKey:kCIInputImageKey];
+        [f setValue:@(hueTurn * 2.0 * M_PI) forKey:@"inputAngle"];
+        CIImage *out = f.outputImage;
+        if (fabs(sat - 1.0) > 0.001) {
+            CIFilter *sc = [CIFilter filterWithName:@"CIColorControls"];
+            [sc setValue:out forKey:kCIInputImageKey];
+            [sc setValue:@(sat) forKey:kCIInputSaturationKey];
+            out = sc.outputImage;
         }
-    }
-    static UIImage *img = nil;
+        static CIContext *ctx = nil;
+        if (!ctx) ctx = [CIContext contextWithOptions:nil];
+        CGImageRef cg = [ctx createCGImage:out fromRect:out.extent];
+        if (!cg) return src;
+        UIImage *r = [UIImage imageWithCGImage:cg scale:src.scale orientation:src.imageOrientation];
+        CGImageRelease(cg);
+        return r;
+    } @catch (...) {}
+    return src;
+}
+
+// 内置素材序号（与设置面板一致）
+// 0 原色 1 赤 2 金 3 青 4 蓝 5 紫 6 鸭子 7 自定义
+#define KZ_PRESET_MAX 7
+
+static UIImage *KZImageForPreset(NSInteger preset) {
+    static UIImage *base = nil;
+    static UIImage *duck = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        NSData *d = [[NSData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:kKZeyeB64]
-                                                        options:NSDataBase64DecodingIgnoreUnknownCharacters];
-        if (d.length > 200) img = [UIImage imageWithData:d];
-        if (!img) img = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe2.png"];
-        PLog(@"[img] eye = %@", img ? [NSString stringWithFormat:@"%.0fx%.0f", img.size.width, img.size.height] : @"nil");
+        base = KZBase64Image(kKZeyeB64);
+        duck = KZBase64Image(kKZduckB64);
+        if (!base) base = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe2.png"];
+        PLog(@"[img] base=%@ duck=%@", base ? @"ok" : @"nil", duck ? @"ok" : @"nil");
     });
-    return img;
+
+    switch (preset) {
+        case 1: return KZHueImage(base, 0.02, 1.35);
+        case 2: return KZHueImage(base, 0.09, 1.45);
+        case 3: return KZHueImage(base, 0.38, 1.25);
+        case 4: return KZHueImage(base, 0.55, 1.25);
+        case 5: return KZHueImage(base, 0.78, 1.20);
+        case 6: return duck ?: base;
+        case 7: {
+            NSString *b64 = KZPrefStr(@"eyeImage");
+            if (b64.length > 200) {
+                NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
+                UIImage *u = d.length > 200 ? [UIImage imageWithData:d] : nil;
+                if (u) return u;
+            }
+            return base;
+        }
+        default: return base;
+    }
+}
+
+static NSInteger KZPreset(void) {
+    double p = KZPrefNum(@"eyePreset", 0);
+    NSInteger v = (NSInteger)round(p);
+    if (v < 0 || v > KZ_PRESET_MAX) v = 0;
+    return v;
 }
 
 #pragma mark - 录屏状态
@@ -95,15 +154,20 @@ static BOOL KZCaptured(void) {
 @property (nonatomic, strong) UIImageView *img;
 @property (nonatomic) CGFloat side;
 @property (nonatomic) double spinDur;
+@property (nonatomic) NSInteger preset;
 @end
+
 @implementation KZEyeDot
 - (void)layoutSubviews {
     [super layoutSubviews];
     self.img.frame = self.bounds;
     self.layer.cornerRadius = CGRectGetWidth(self.bounds) / 2.0;
 }
+- (void)kzApplyImage {
+    self.img.image = KZImageForPreset(self.preset);
+    self.backgroundColor = self.img.image ? [UIColor blackColor] : [UIColor redColor];
+}
 - (void)kzAnim {
-    // 每次重建都重新挂动画，防止「素材不转」
     [self.img.layer removeAnimationForKey:@"kzspin"];
     if (self.spinDur <= 0) self.spinDur = 1.5;
     CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
@@ -116,15 +180,14 @@ static BOOL KZCaptured(void) {
 }
 @end
 
-static CGFloat KZEyeSideFor(CGFloat hostH) {
+// 尺寸：不再受宿主高度限制（1.42 实测证明祖先不裁剪），允许溢出到岛外
+static CGFloat KZEyeSide(void) {
     double sc = KZPrefNum(@"scale", 1.0);
-    if (sc < 0.3 || sc > 3.0) sc = 1.0;
-    double base = 24.0;
-    CGFloat side = base * sc;
-    // 不超过容器高度（否则被裁），不小于 12
-    CGFloat maxSide = hostH > 0 ? hostH : 22.0;
-    if (side > maxSide) side = maxSide;
-    if (side < 12) side = 12;
+    if (sc < 0.05) sc = 1.0;
+    if (sc > 3.0) sc = 3.0;
+    CGFloat side = 24.0 * sc;
+    if (side < 8) side = 8;
+    if (side > 46) side = 46;      // 展开态岛高约 44，再大就超出硬件合理范围
     return side;
 }
 
@@ -132,45 +195,47 @@ static KZEyeDot *KZMakeEye(CGFloat side) {
     KZEyeDot *v = [[KZEyeDot alloc] initWithFrame:CGRectMake(0, 0, side, side)];
     v.tag = KZ_EYE_TAG;
     v.side = side;
+    v.preset = KZPreset();
     v.backgroundColor = [UIColor blackColor];
     v.layer.cornerRadius = side / 2.0;
     v.layer.masksToBounds = YES;
     v.userInteractionEnabled = NO;
     v.autoresizingMask = UIViewAutoresizingNone;
 
-    UIImage *img = KZEyeImage();
-    UIImageView *iv = [[UIImageView alloc] initWithImage:img];
-    iv.frame = v.bounds;
+    UIImageView *iv = [[UIImageView alloc] initWithFrame:v.bounds];
     iv.contentMode = UIViewContentModeScaleAspectFill;
     iv.userInteractionEnabled = NO;
     iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     v.img = iv;
     [v addSubview:iv];
-    if (!img) v.backgroundColor = [UIColor redColor];
 
     double dur = KZPrefNum(@"duration", 1.5);
-    if (dur < 0.2) dur = 1.5;
+    if (dur < 0.05) dur = 1.5;
     v.spinDur = dur;
+    [v kzApplyImage];
     [v kzAnim];
     return v;
 }
 
-// 按宿主容器重新摆位（只动眼睛，不动宿主、不改系统子视图）
+// 只动眼睛，不动宿主、不改系统子视图
 static void KZLayoutEye(KZEyeDot *eye, UIView *host) {
     if (!eye || !host) return;
     CGRect b = host.bounds;
-    CGFloat h = CGRectGetHeight(b);
-    CGFloat side = KZEyeSideFor(h);
+    CGFloat side = KZEyeSide();
     double offx = KZPrefNum(@"offX", 0.0);
     double offy = KZPrefNum(@"offY", 0.0);
+
     eye.frame = CGRectMake((CGRectGetWidth(b) - side) / 2.0 + offx,
-                           (h - side) / 2.0 + offy, side, side);
+                           (CGRectGetHeight(b) - side) / 2.0 + offy, side, side);
     eye.layer.cornerRadius = side / 2.0;
     eye.img.frame = eye.bounds;
 
+    NSInteger p = KZPreset();
+    if (p != eye.preset) { eye.preset = p; [eye kzApplyImage]; }
+
     double dur = KZPrefNum(@"duration", 1.5);
-    if (dur < 0.2) dur = 1.5;
-    if (fabs(dur - eye.spinDur) > 0.01) {
+    if (dur < 0.05) dur = 1.5;
+    if (fabs(dur - eye.spinDur) > 0.001) {
         eye.spinDur = dur;
         [eye kzAnim];
     } else if (![eye.img.layer animationForKey:@"kzspin"]) {
@@ -193,7 +258,7 @@ static BOOL KZIsRecording(id elem) {
     return s.length > 0 && [s.lowercaseString containsString:@"screenrecording"];
 }
 
-#pragma mark - 注入（只叠加，不隐藏系统内容 —— 红点被眼睛盖住即可）
+#pragma mark - 注入（纯叠加：红点被盖住，系统内容一律保留）
 
 static NSHashTable *gHosts = nil;
 static void KZTrack(UIView *v) {
@@ -204,7 +269,6 @@ static void KZTrack(UIView *v) {
 static void KZInjectInto(UIView *host, NSString *slot) {
     if (!host) return;
     if (!KZPrefBool(@"enabled", YES)) return;
-    if (!KZPrefBool(@"leftOn", YES)) return;
     KZTrack(host);
 
     KZEyeDot *eye = nil;
@@ -212,8 +276,7 @@ static void KZInjectInto(UIView *host, NSString *slot) {
         if (s.tag == KZ_EYE_TAG && [s isKindOfClass:[KZEyeDot class]]) { eye = (KZEyeDot *)s; break; }
     }
     if (!eye) {
-        CGFloat side = KZEyeSideFor(CGRectGetHeight(host.bounds));
-        eye = KZMakeEye(side);
+        eye = KZMakeEye(KZEyeSide());
         [host addSubview:eye];
         KZOnce([NSString stringWithFormat:@"inj-%@", slot],
                [NSString stringWithFormat:@"[inject] %@ ← %@ %.0fx%.0f",
@@ -228,7 +291,7 @@ static void KZInjectInto(UIView *host, NSString *slot) {
     KZLayoutEye(eye, host);
 }
 
-#pragma mark - hooks：录屏 element 的各个视图槽位
+#pragma mark - hooks
 
 static id (*origLeading)(id, SEL);
 static id kzLeading(id self, SEL _cmd) {
@@ -252,14 +315,16 @@ static id kzMinimal(id self, SEL _cmd) {
     return v;
 }
 
-// 把岛拉长一点：左侧槽位右移，避开挖孔；同时也给素材留出完整圆形
+// 只对录屏 element 请求更宽的布局：拉长后左侧槽位右移，避开挖孔不裁角
 static NSInteger (*origPref)(id, SEL);
 static NSInteger kzPref(id self, SEL _cmd) {
     NSInteger v = 0;
     @try { v = origPref ? origPref(self, _cmd) : 0; } @catch (...) {}
     if (KZIsRecording(self)) {
-        KZOnce(@"pref", [NSString stringWithFormat:@"[layout] preferredLayoutMode %ld -> 2", (long)v]);
-        return 2;
+        NSInteger out = MAX(v, 2);
+        KZOnce([NSString stringWithFormat:@"pref-%ld", (long)out],
+               [NSString stringWithFormat:@"[layout] preferred %ld -> %ld", (long)v, (long)out]);
+        return out;
     }
     return v;
 }
@@ -268,8 +333,10 @@ static NSInteger kzMax(id self, SEL _cmd) {
     NSInteger v = 0;
     @try { v = origMax ? origMax(self, _cmd) : 0; } @catch (...) {}
     if (KZIsRecording(self)) {
-        KZOnce(@"max", [NSString stringWithFormat:@"[layout] maximumSupportedLayoutMode %ld -> 3", (long)v]);
-        return 3;
+        NSInteger out = MAX(v, 3);
+        KZOnce([NSString stringWithFormat:@"max-%ld", (long)out],
+               [NSString stringWithFormat:@"[layout] max %ld -> %ld", (long)v, (long)out]);
+        return out;
     }
     return v;
 }
@@ -290,7 +357,7 @@ static void KZInstall(void) {
     if ([c instancesRespondToSelector:s3]) { MSHookMessageEx(c, s3, (IMP)kzMinimal, (IMP *)&origMinimal); n++; }
     if ([c instancesRespondToSelector:s4]) { MSHookMessageEx(c, s4, (IMP)kzPref, (IMP *)&origPref); n++; }
     if ([c instancesRespondToSelector:s5]) { MSHookMessageEx(c, s5, (IMP)kzMax, (IMP *)&origMax); n++; }
-    if (n) { gHooked = YES; PLog(@"[hook] hook 了 %d 个方法（leading/minimal/pref/max）", n); }
+    if (n) { gHooked = YES; PLog(@"[hook] hook 了 %d 个方法", n); }
 }
 
 #pragma mark - 保活 / 清理
@@ -318,32 +385,27 @@ static void KZTick(void) {
         }
         return;
     }
-    // morph 期间持续校正（宿主尺寸在变）
     if (!gHosts) return;
     for (UIView *h in [[gHosts allObjects] copy]) {
-        UIView *parent = h.superview;
-        if (!parent || !h.window) continue;
+        if (!h.window) continue;
         for (UIView *s in h.subviews) {
             if (s.tag == KZ_EYE_TAG && [s isKindOfClass:[KZEyeDot class]]) KZLayoutEye((KZEyeDot *)s, h);
         }
     }
 }
 
+// 改设置：原地刷新（不销毁，避免素材消失）
 static void KZReapply(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         gSeen = nil;
         if (gHosts) {
             for (UIView *h in [[gHosts allObjects] copy]) {
-                for (UIView *s in [h.subviews copy]) {
-                    if (s.tag == KZ_EYE_TAG && [s isKindOfClass:[KZEyeDot class]]) {
-                        [s removeFromSuperview];
-                    }
-                }
+                KZInjectInto(h, @"reapply");
             }
         }
-        PLog(@"[apply] scale=%.2f offX=%.1f offY=%.1f dur=%.2f",
-             KZPrefNum(@"scale", 1.0), KZPrefNum(@"offX", 0.0),
-             KZPrefNum(@"offY", 0.0), KZPrefNum(@"duration", 1.5));
+        PLog(@"[apply] scale=%.2f offX=%.1f offY=%.1f dur=%.2f preset=%ld",
+             KZPrefNum(@"scale", 1.0), KZPrefNum(@"offX", 0.0), KZPrefNum(@"offY", 0.0),
+             KZPrefNum(@"duration", 1.5), (long)KZPreset());
     });
 }
 static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const void *ob, CFDictionaryRef i) {
@@ -351,7 +413,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.46 (pure replace red dot, no own element)");
+    PLog(@"ctor v1.47 (presets, free size, no l/r switch)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
