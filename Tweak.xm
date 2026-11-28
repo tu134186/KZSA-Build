@@ -1,13 +1,12 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import <CoreImage/CoreImage.h>
 #import <substrate.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <stdarg.h>
 #import "kzeye_b64.h"
-#import "kzduck_b64.h"
+#import "kzpresets_b64.h"
 
 #define KZ_DOMAIN "com.minis.kzprobe"
 #define KZ_PREF_DOMAIN "com.minis.kzsa"
@@ -61,7 +60,7 @@ static NSString *KZPrefStr(NSString *key) {
     return [v isKindOfClass:[NSString class]] ? v : nil;
 }
 
-#pragma mark - 素材（内置多套 + 自定义导入）
+#pragma mark - 素材（8 套内置 + 自定义导入）
 
 static UIImage *KZBase64Image(const char *b64) {
     if (!b64) return nil;
@@ -70,72 +69,42 @@ static UIImage *KZBase64Image(const char *b64) {
     return d.length > 200 ? [UIImage imageWithData:d] : nil;
 }
 
-static UIImage *KZHueImage(UIImage *src, double hueTurn, double sat) {
-    if (!src.CGImage) return src;
-    if (fabs(hueTurn) < 0.001 && fabs(sat - 1.0) < 0.001) return src;
-    @try {
-        CIImage *ci = [CIImage imageWithCGImage:src.CGImage];
-        CIFilter *f = [CIFilter filterWithName:@"CIHueAdjust"];
-        if (!f) return src;
-        [f setValue:ci forKey:kCIInputImageKey];
-        [f setValue:@(hueTurn * 2.0 * M_PI) forKey:@"inputAngle"];
-        CIImage *out = f.outputImage;
-        if (fabs(sat - 1.0) > 0.001) {
-            CIFilter *sc = [CIFilter filterWithName:@"CIColorControls"];
-            [sc setValue:out forKey:kCIInputImageKey];
-            [sc setValue:@(sat) forKey:kCIInputSaturationKey];
-            out = sc.outputImage;
-        }
-        static CIContext *ctx = nil;
-        if (!ctx) ctx = [CIContext contextWithOptions:nil];
-        CGImageRef cg = [ctx createCGImage:out fromRect:out.extent];
-        if (!cg) return src;
-        UIImage *r = [UIImage imageWithCGImage:cg scale:src.scale orientation:src.imageOrientation];
-        CGImageRelease(cg);
-        return r;
-    } @catch (...) {}
-    return src;
-}
-
-// 内置素材序号（与设置面板一致）
-// 0 原色 1 赤 2 金 3 青 4 蓝 5 紫 6 鸭子 7 自定义
-#define KZ_PRESET_MAX 7
+// preset 0..7 = 内置 8 套；8 = 用户导入；其它 → 0
 
 static UIImage *KZImageForPreset(NSInteger preset) {
-    static UIImage *base = nil;
-    static UIImage *duck = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        base = KZBase64Image(kKZeyeB64);
-        duck = KZBase64Image(kKZduckB64);
-        if (!base) base = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe2.png"];
-        PLog(@"[img] base=%@ duck=%@", base ? @"ok" : @"nil", duck ? @"ok" : @"nil");
-    });
+    static NSMutableArray *cache = nil;
+    if (!cache) cache = [NSMutableArray array];
+    @synchronized (cache) {
+        while ((NSInteger)cache.count < kKZPresetCount) [cache addObject:[NSNull null]];
 
-    switch (preset) {
-        case 1: return KZHueImage(base, 0.02, 1.35);
-        case 2: return KZHueImage(base, 0.09, 1.45);
-        case 3: return KZHueImage(base, 0.38, 1.25);
-        case 4: return KZHueImage(base, 0.55, 1.25);
-        case 5: return KZHueImage(base, 0.78, 1.20);
-        case 6: return duck ?: base;
-        case 7: {
-            NSString *b64 = KZPrefStr(@"eyeImage");
-            if (b64.length > 200) {
-                NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
-                UIImage *u = d.length > 200 ? [UIImage imageWithData:d] : nil;
-                if (u) return u;
-            }
-            return base;
+        NSInteger n = kKZPresetCount;
+        if (preset >= 0 && preset < n) {
+            id c = cache[preset];
+            if (c != [NSNull null]) return c;
+            UIImage *img = KZBase64Image(kKZPresetB64[preset]);
+            if (img) { cache[preset] = img; return img; }
+            return nil;
         }
-        default: return base;
+        // 自定义
+        NSString *b64 = KZPrefStr(@"eyeImage");
+        if (b64.length > 200) {
+            NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
+            UIImage *u = d.length > 200 ? [UIImage imageWithData:d] : nil;
+            if (u) return u;
+        }
+        // 回退第一套
+        id c0 = cache.count ? cache[0] : [NSNull null];
+        if (c0 != [NSNull null]) return c0;
+        UIImage *img = KZBase64Image(kKZPresetB64[0]);
+        if (img && cache.count) cache[0] = img;
+        return img;
     }
 }
 
 static NSInteger KZPreset(void) {
     double p = KZPrefNum(@"eyePreset", 0);
     NSInteger v = (NSInteger)round(p);
-    if (v < 0 || v > KZ_PRESET_MAX) v = 0;
+    if (v < 0 || v > kKZPresetCount) v = 0;
     return v;
 }
 
