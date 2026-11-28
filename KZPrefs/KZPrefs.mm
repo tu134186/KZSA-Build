@@ -208,7 +208,7 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
         for (NSInteger i = 0; i < imgs.count; i++) {
             UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
             b.tag = i;
-            b.layer.cornerRadius = 24;
+            b.layer.cornerRadius = 20;
             b.layer.masksToBounds = YES;
             b.backgroundColor = [UIColor blackColor];
             b.imageView.contentMode = UIViewContentModeScaleAspectFill;
@@ -280,12 +280,12 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
     self.detailTextLabel.hidden = YES;
 
     CGRect b = self.contentView.bounds;
-    CGFloat pad = 12;
+    CGFloat pad = 10;
     CGFloat cols = 5;
     CGFloat avail = b.size.width - pad * 2;
-    CGFloat gap = 8;
+    CGFloat gap = 6;
     CGFloat cellW = (avail - gap * (cols - 1)) / cols;
-    CGFloat thumb = MIN(48.0, cellW);
+    CGFloat thumb = MIN(40.0, cellW);
 
     for (NSInteger i = 0; i < (NSInteger)_btns.count; i++) {
         UIButton *btn = _btns[i];
@@ -293,11 +293,11 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
         NSInteger row = i / (NSInteger)cols;
         NSInteger col = i % (NSInteger)cols;
         CGFloat x = pad + col * (cellW + gap);
-        CGFloat y = 6 + row * 72;
-        wrap.frame = CGRectMake(x, y, cellW, 66);
+        CGFloat y = 4 + row * 62;
+        wrap.frame = CGRectMake(x, y, cellW, 58);
         btn.frame = CGRectMake((cellW - thumb) / 2.0, 0, thumb, thumb);
         UILabel *lb = [btn viewWithTag:100];
-        lb.frame = CGRectMake(-4, thumb + 4, cellW + 8, 13);
+        lb.frame = CGRectMake(-4, thumb + 2, cellW + 8, 12);
     }
 }
 
