@@ -11,6 +11,8 @@
 #define KZ_PREF_DOMAIN "com.minis.kzsa"
 #define KZ_NOTIFY "com.minis.kzsa.changed"
 #define KZ_EYE_TAG 0x4B5A
+#define KZ_STOP_TAG 0x4B5B
+#define KZ_TIMER_TAG 0x4B5C
 
 #pragma mark - 日志
 
@@ -80,7 +82,7 @@ static UIImage *KZEyeImage(void) {
     return img;
 }
 
-#pragma mark - 录屏状态 / 计时
+#pragma mark - 录屏状态 / 控制
 
 static BOOL KZCaptured(void) {
     @try {
@@ -89,13 +91,77 @@ static BOOL KZCaptured(void) {
     return NO;
 }
 
-static NSTimeInterval gStartAt = 0;      // 本次录屏的起点
-static NSString *KZElapsed(void) {
-    if (gStartAt <= 0) return @"00:00";
-    double t = CFAbsoluteTimeGetCurrent() - gStartAt;
-    if (t < 0) t = 0;
-    int total = (int)t;
+static NSTimeInterval gStartAt = 0;
+static BOOL gPaused = NO;
+static NSTimeInterval gPausedAt = 0;
+static NSTimeInterval gPausedTotal = 0;
+
+static NSTimeInterval KZElapsedDouble(void) {
+    if (gStartAt <= 0) return 0;
+    NSTimeInterval now = CFAbsoluteTimeGetCurrent();
+    if (gPaused && gPausedAt > 0) now = gPausedAt;
+    return MAX(0, now - gStartAt - gPausedTotal);
+}
+static NSString *KZElapsedText(void) {
+    int total = (int)KZElapsedDouble();
     return [NSString stringWithFormat:@"%02d:%02d", total / 60, total % 60];
+}
+
+static id KZRecorder(void) {
+    Class rp = NSClassFromString(@"RPScreenRecorder");
+    if (!rp) return nil;
+    SEL sh = NSSelectorFromString(@"sharedRecorder");
+    if (![rp respondsToSelector:sh]) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(rp, sh);
+}
+
+static void KZStopRecording(void) {
+    PLog(@"[tap] 请求停止录屏");
+    id rec = KZRecorder();
+    if (!rec) { PLog(@"[tap] 拿不到 RPScreenRecorder"); return; }
+    SEL s1 = NSSelectorFromString(@"stopSystemRecording:");
+    if ([rec respondsToSelector:s1]) {
+        @try {
+            void (^h)(id) = ^(id err) { PLog(@"[tap] stopSystemRecording 回调 %@", err ?: @"ok"); };
+            ((void (*)(id, SEL, id))objc_msgSend)(rec, s1, h);
+            PLog(@"[tap] 调用 stopSystemRecording:");
+            return;
+        } @catch (NSException *e) { PLog(@"[tap] 异常 %@", e.reason); }
+    }
+    SEL s2 = NSSelectorFromString(@"stopRecordingWithHandler:");
+    if ([rec respondsToSelector:s2]) {
+        @try {
+            void (^h)(id) = ^(id err) { PLog(@"[tap] stopRecording 回调 %@", err ?: @"ok"); };
+            ((void (*)(id, SEL, id))objc_msgSend)(rec, s2, h);
+            PLog(@"[tap] 调用 stopRecordingWithHandler:");
+        } @catch (NSException *e) { PLog(@"[tap] 异常 %@", e.reason); }
+    }
+}
+
+static void KZTogglePause(void) {
+    id rec = KZRecorder();
+    if (!rec) return;
+    BOOL want = !gPaused;
+    // 优先 setPaused:
+    SEL sp = NSSelectorFromString(@"setPaused:");
+    BOOL ok = NO;
+    if ([rec respondsToSelector:sp]) {
+        @try { ((void (*)(id, SEL, BOOL))objc_msgSend)(rec, sp, want); ok = YES; } @catch (...) {}
+    }
+    if (!ok) {
+        SEL s = NSSelectorFromString(want ? @"pauseInAppRecording" : @"resumeInAppRecording");
+        if ([rec respondsToSelector:s]) {
+            @try { ((void (*)(id, SEL))objc_msgSend)(rec, s); ok = YES; } @catch (...) {}
+        }
+    }
+    if (ok) {
+        gPaused = want;
+        if (want) { gPausedAt = CFAbsoluteTimeGetCurrent(); }
+        else if (gPausedAt > 0) { gPausedTotal += CFAbsoluteTimeGetCurrent() - gPausedAt; gPausedAt = 0; }
+        PLog(@"[tap] %@ 录屏 %@", want ? @"暂停" : @"恢复", ok ? @"成功" : @"失败");
+    } else {
+        PLog(@"[tap] 没有可用的暂停接口");
+    }
 }
 
 #pragma mark - 私有协议
@@ -121,18 +187,14 @@ static NSString *KZElapsed(void) {
 - (void)setLayoutMode:(NSInteger)mode reason:(NSInteger)reason;
 @end
 
-#pragma mark - 写轮眼视图
+#pragma mark - 写轮眼
 
 @interface KZEyeDot : UIView
 @property (nonatomic, strong) UIImageView *img;
 @property (nonatomic) CGFloat side;
 @end
-
 @implementation KZEyeDot
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    self.img.frame = self.bounds;
-}
+- (void)layoutSubviews { [super layoutSubviews]; self.img.frame = self.bounds; }
 @end
 
 static KZEyeDot *KZMakeEye(CGFloat side) {
@@ -169,15 +231,16 @@ static CGFloat KZEyeSide(void) {
     double sc = KZPrefNum(@"scale", 1.0);
     if (sc < 0.3 || sc > 3.0) sc = 1.0;
     CGFloat side = 26.0 * sc;
-    if (side < 12) side = 12;
-    if (side > 44) side = 44;   // 岛高上限
+    if (side < 14) side = 14;
+    if (side > 40) side = 40;
     return side;
 }
 
-#pragma mark - 计时视图（我们自己画，因为系统那套已经被顶掉）
+#pragma mark - 计时 + 停止（自己画的，带精确点击）
 
 @interface KZTimerView : UIView
 @property (nonatomic, strong) UILabel *label;
+@property (nonatomic, strong) UIView *stopBtn;
 @property (nonatomic, strong) NSTimer *timer;
 @end
 
@@ -186,66 +249,55 @@ static CGFloat KZEyeSide(void) {
     self = [super initWithFrame:frame];
     if (self) {
         self.backgroundColor = [UIColor clearColor];
-        _label = [[UILabel alloc] initWithFrame:self.bounds];
-        _label.text = @"00:00";
+        self.userInteractionEnabled = YES;
+
+        CGFloat stopW = 22;
+        _label = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, frame.size.width - stopW - 4, frame.size.height)];
+        _label.tag = KZ_TIMER_TAG;
         _label.textColor = [UIColor whiteColor];
-        _label.font = [UIFont monospacedDigitSystemFontOfSize:14 weight:UIFontWeightMedium];
-        _label.textAlignment = NSTextAlignmentCenter;
+        _label.font = [UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightMedium];
+        _label.textAlignment = NSTextAlignmentRight;
         _label.adjustsFontSizeToFitWidth = YES;
-        _label.minimumScaleFactor = 0.6;
-        _label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _label.minimumScaleFactor = 0.7;
+        _label.userInteractionEnabled = YES;
         [self addSubview:_label];
-        [self kzStartTimer];
+
+        _stopBtn = [[UIView alloc] initWithFrame:CGRectMake(frame.size.width - stopW, (frame.size.height - stopW) / 2.0, stopW, stopW)];
+        _stopBtn.tag = KZ_STOP_TAG;
+        _stopBtn.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.18];
+        _stopBtn.layer.cornerRadius = 5.0;
+        _stopBtn.userInteractionEnabled = YES;
+        // 里面的小方块
+        UIView *sq = [[UIView alloc] initWithFrame:CGRectMake(7, 7, 8, 8)];
+        sq.backgroundColor = [UIColor whiteColor];
+        sq.layer.cornerRadius = 1.5;
+        sq.userInteractionEnabled = NO;
+        [_stopBtn addSubview:sq];
+        [self addSubview:_stopBtn];
+
+        UITapGestureRecognizer *tapStop = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(onStop)];
+        [_stopBtn addGestureRecognizer:tapStop];
+        UITapGestureRecognizer *tapPause = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(onPause)];
+        [_label addGestureRecognizer:tapPause];
+
+        [self kzStart];
     }
     return self;
 }
-- (void)kzStartTimer {
-    self.timer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
-        self.label.text = KZElapsed();
+- (void)onStop { KZStopRecording(); }
+- (void)onPause { KZTogglePause(); }
+- (void)kzStart {
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) {
+        self.label.text = KZElapsedText();
+        self.label.alpha = gPaused ? 0.45 : 1.0;
     }];
     [[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
 }
-- (void)kzStopTimer {
-    [self.timer invalidate];
-    self.timer = nil;
-}
-- (void)dealloc {
-    [self kzStopTimer];
-}
+- (void)kzStop { [self.timer invalidate]; self.timer = nil; }
+- (void)dealloc { [self kzStop]; }
 @end
 
-#pragma mark - 停止录屏
-
-static void KZStopRecording(void) {
-    PLog(@"[tap] 请求停止录屏");
-    Class rp = NSClassFromString(@"RPScreenRecorder");
-    id rec = nil;
-    if (rp) {
-        SEL sh = NSSelectorFromString(@"sharedRecorder");
-        if ([rp respondsToSelector:sh]) rec = ((id (*)(id, SEL))objc_msgSend)(rp, sh);
-    }
-    if (!rec) { PLog(@"[tap] 拿不到 RPScreenRecorder"); return; }
-
-    SEL s1 = NSSelectorFromString(@"stopSystemRecording:");
-    if ([rec respondsToSelector:s1]) {
-        @try {
-            void (^handler)(id) = ^(id err) { PLog(@"[tap] stopSystemRecording 回调 %@", err ?: @"ok"); };
-            ((void (*)(id, SEL, id))objc_msgSend)(rec, s1, handler);
-            PLog(@"[tap] 调用 stopSystemRecording:");
-            return;
-        } @catch (NSException *e) { PLog(@"[tap] 异常 %@", e.reason); }
-    }
-    SEL s2 = NSSelectorFromString(@"stopRecordingWithHandler:");
-    if ([rec respondsToSelector:s2]) {
-        @try {
-            void (^handler)(id) = ^(id err) { PLog(@"[tap] stopRecording 回调 %@", err ?: @"ok"); };
-            ((void (*)(id, SEL, id))objc_msgSend)(rec, s2, handler);
-            PLog(@"[tap] 调用 stopRecordingWithHandler:");
-        } @catch (NSException *e) { PLog(@"[tap] 异常 %@", e.reason); }
-    }
-}
-
-#pragma mark - 自建 element provider（o2Pro 的核心：自己是 element，不是客人）
+#pragma mark - 自建 element
 
 @interface KZElementProvider : NSObject <SAElement, SAElementViewProviding, SAActivityBehavior, SAUILayoutSpecifying>
 @end
@@ -268,20 +320,18 @@ static void KZStopRecording(void) {
 - (BOOL)_canShowWhileLocked { return YES; }
 
 - (KZEyeDot *)eye {
-    if (!_eye) {
-        _eye = KZMakeEye(KZEyeSide());
-        PLog(@"[prov] 建写轮眼 side=%.0f", _eye.side);
-    }
+    if (!_eye) { _eye = KZMakeEye(KZEyeSide()); PLog(@"[prov] 写轮眼 %.0f", _eye.side); }
     return _eye;
 }
 - (KZEyeDot *)minEye {
-    if (!_minEye) _minEye = KZMakeEye(KZEyeSide() * 0.72);
+    if (!_minEye) _minEye = KZMakeEye(KZEyeSide() * 0.68);
     return _minEye;
 }
 - (KZTimerView *)timerView {
     if (!_timerView) {
-        _timerView = [[KZTimerView alloc] initWithFrame:CGRectMake(0, 0, 58, 22)];
-        PLog(@"[prov] 建计时视图");
+        CGFloat h = 22;
+        _timerView = [[KZTimerView alloc] initWithFrame:CGRectMake(0, 0, 68, h)];
+        PLog(@"[prov] 计时+停止 68x22");
     }
     return _timerView;
 }
@@ -289,51 +339,38 @@ static void KZStopRecording(void) {
 - (UIView *)leadingView { KZOnce(@"lead", @"[prov] leadingView"); return [self eye]; }
 - (UIView *)expandedLeadingView { return [self eye]; }
 - (UIView *)minimalView { KZOnce(@"min", @"[prov] minimalView"); return [self minEye]; }
-- (UIView *)trailingView { KZOnce(@"trail", @"[prov] trailingView（自己的计时）"); return [self timerView]; }
-- (UIView *)expandedTrailingView {
-    KZOnce(@"extrail", @"[prov] expandedTrailingView");
-    return KZPrefBool(@"showTimer", YES) ? [self timerView] : nil;
-}
+- (UIView *)trailingView { KZOnce(@"trail", @"[prov] trailingView"); return [self timerView]; }
+- (UIView *)expandedTrailingView { return [self timerView]; }
 
 - (NSInteger)layoutMode { return _layoutMode; }
 - (NSInteger)preferredLayoutMode { return 2; }
-- (NSInteger)maximumSupportedLayoutMode { return 3; }
+- (NSInteger)maximumSupportedLayoutMode { return 2; }
 - (NSInteger)minimumSupportedLayoutMode { return 0; }
-- (void)setLayoutMode:(NSInteger)mode reason:(NSInteger)reason {
-    _layoutMode = mode;
-}
+- (void)setLayoutMode:(NSInteger)mode reason:(NSInteger)reason { _layoutMode = mode; }
 
 - (CGSize)sizeThatFitsSize:(CGSize)size forProvidedView:(UIView *)view inLayoutMode:(NSInteger)mode {
-    if (view == _eye || view == _minEye) {
-        CGFloat s = [(KZEyeDot *)view side];
-        return CGSizeMake(s, s);
-    }
-    if (view == _timerView) return CGSizeMake(58, 22);
+    if (view == _eye) return CGSizeMake(_eye.side, _eye.side);
+    if (view == _minEye) return CGSizeMake(_minEye.side, _minEye.side);
+    if (view == _timerView) return CGSizeMake(68, 22);
     return CGSizeMake(22, 22);
 }
-- (NSDirectionalEdgeInsets)preferredEdgeOutsetsForLayoutMode:(NSInteger)mode
-                                            suggestedOutsets:(NSDirectionalEdgeInsets)sug
-                                               maximumOutsets:(NSDirectionalEdgeInsets)mx {
-    return sug;
-}
+- (NSDirectionalEdgeInsets)preferredEdgeOutsetsForLayoutMode:(NSInteger)mode suggestedOutsets:(NSDirectionalEdgeInsets)sug maximumOutsets:(NSDirectionalEdgeInsets)mx { return sug; }
 - (BOOL)isProvidedViewConcentric:(UIView *)view inLayoutMode:(NSInteger)mode { return YES; }
 - (BOOL)isMinimalPresentationPossible { return YES; }
 - (BOOL)isInteractiveDismissalEnabled { return NO; }
 - (BOOL)isRequestingMenuPresentation { return NO; }
 
-// 点头像/整块 → 停止录屏（系统那套 UI 已被我们顶替，没有停止按钮了）
 - (BOOL)handleElementViewEvent:(long long)event {
     PLog(@"[tap] handleElementViewEvent %lld", event);
-    if ((unsigned long long)event < 4) {
-        KZStopRecording();
-        return YES;
-    }
+    if ((unsigned long long)event == 1) { KZStopRecording(); return YES; }   // leading = 写轮眼 → 停止
+    if ((unsigned long long)event == 2) { KZTogglePause(); return YES; }     // trailing → 暂停
+    if ((unsigned long long)event == 3) { KZStopRecording(); return YES; }   // minimal → 停止
     return NO;
 }
 
-- (void)setActivityHost:(id)host { PLog(@"[prov] activityHost=%@", host ? NSStringFromClass([host class]) : @"nil"); }
+- (void)setActivityHost:(id)host {}
 - (id)activityHost { return nil; }
-- (void)setElementHost:(id)host { PLog(@"[prov] elementHost=%@", host ? NSStringFromClass([host class]) : @"nil"); }
+- (void)setElementHost:(id)host {}
 - (id)elementHost { return nil; }
 
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
@@ -345,14 +382,14 @@ static void KZStopRecording(void) {
 }
 @end
 
-#pragma mark - 假 assertion（用来吞掉系统录屏 element 的注册）
+#pragma mark - 假 assertion
 
 @interface KZDummyAssertion : NSObject
 @end
 @implementation KZDummyAssertion
 - (BOOL)isValid { return YES; }
-- (void)invalidate { PLog(@"[sup] 系统录屏 assertion 被 invalidate（我们已吞掉）"); }
-- (void)invalidateWithReason:(id)r { PLog(@"[sup] 系统录屏 assertion invalidateWithReason: %@", r); }
+- (void)invalidate {}
+- (void)invalidateWithReason:(id)r { PLog(@"[sup] dummy invalidate %@", r); }
 - (id)element { return nil; }
 - (id)invalidationReason { return nil; }
 @end
@@ -363,7 +400,6 @@ static id gManager = nil;
 static id gProvider = nil;
 static id gAssertion = nil;
 static BOOL gSuppressOn = NO;
-static NSUInteger gSuppressed = 0;
 
 static NSString *KZElemIdent(id e) {
     if (!e) return nil;
@@ -375,20 +411,31 @@ static NSString *KZElemIdent(id e) {
 }
 static BOOL KZIsRecordingElem(id e) {
     NSString *s = KZElemIdent(e);
-    return s.length > 0 && [s.lowercaseString containsString:@"screenrecording"];
+    if (!s.length) return NO;
+    NSString *l = s.lowercaseString;
+    return [l containsString:@"screenrecording"] ||
+           [l containsString:@"recordingindicator"] ||
+           [l containsString:@"sbrecording"];
 }
 
-#pragma mark - hook：吞掉系统录屏 element 的注册（= o2Pro 的 _shouldSuppressElement 等价物）
+#pragma mark - hook registerElement（两个类都要）
 
-static id (*origRegister)(id, SEL, id);
-static id kzRegister(id self, SEL _cmd, id element) {
+static id (*origRegVC)(id, SEL, id);
+static id kzRegVC(id self, SEL _cmd, id element) {
     if (gSuppressOn && KZIsRecordingElem(element)) {
-        gSuppressed++;
-        PLog(@"[sup] 拦截系统录屏 element 注册：#%lu %@", (unsigned long)gSuppressed,
-             KZElemIdent(element) ?: @"?");
+        PLog(@"[sup] VC 拦截录屏 element 注册：%@", KZElemIdent(element) ?: @"?");
         return [[KZDummyAssertion alloc] init];
     }
-    return origRegister ? origRegister(self, _cmd, element) : nil;
+    return origRegVC ? origRegVC(self, _cmd, element) : nil;
+}
+
+static id (*origRegMgr)(id, SEL, id);
+static id kzRegMgr(id self, SEL _cmd, id element) {
+    if (gSuppressOn && KZIsRecordingElem(element) && element != gProvider) {
+        PLog(@"[sup] Manager 拦截录屏 element 注册：%@", KZElemIdent(element) ?: @"?");
+        return [[KZDummyAssertion alloc] init];
+    }
+    return origRegMgr ? origRegMgr(self, _cmd, element) : nil;
 }
 
 static void (*origPromote)(id, SEL);
@@ -400,23 +447,60 @@ static void kzPromote(id self, SEL _cmd) {
     @try { if (origPromote) origPromote(self, _cmd); } @catch (...) {}
 }
 
-static void (*origWillLayout)(id, SEL);
-static void kzWillLayout(id self, SEL _cmd) {
-    if (!gManager) gManager = self;
-    @try { if (origWillLayout) origWillLayout(self, _cmd); } @catch (...) {}
+#pragma mark - 强制移除系统录屏 element
+
+static void KZPurgeSystemRecordingElements(void) {
+    if (!gManager) return;
+    SEL rg = NSSelectorFromString(@"registeredElements");
+    if (![gManager respondsToSelector:rg]) return;
+    NSArray *list = ((id (*)(id, SEL))objc_msgSend)(gManager, rg);
+    if (![list isKindOfClass:[NSArray class]]) return;
+
+    for (id e in [list copy]) {
+        if (e == gProvider) continue;
+        if (!KZIsRecordingElem(e)) continue;
+
+        SEL ae = NSSelectorFromString(@"elementAssertionForElement:");
+        id as = nil;
+        if ([gManager respondsToSelector:ae]) {
+            @try { as = ((id (*)(id, SEL, id))objc_msgSend)(gManager, ae, e); } @catch (...) {}
+        }
+        SEL rm = NSSelectorFromString(@"_removeAssertionForElement:");
+        if ([gManager respondsToSelector:rm]) {
+            @try { ((void (*)(id, SEL, id))objc_msgSend)(gManager, rm, e); } @catch (...) {}
+        }
+        if (as) {
+            SEL inv = NSSelectorFromString(@"invalidate");
+            if ([as respondsToSelector:inv]) {
+                @try { ((void (*)(id, SEL))objc_msgSend)(as, inv); } @catch (...) {}
+            }
+        }
+        PLog(@"[sup] 已强制移除系统录屏 element %@（assertion=%@）",
+             KZElemIdent(e) ?: @"?", as ? NSStringFromClass([as class]) : @"nil");
+    }
 }
 
 #pragma mark - 注册 / 注销
 
-static void KZUnregister(void) {
-    if (!gAssertion) return;
-    @try {
+static void KZRemoveOwnElement(void) {
+    if (!gManager || !gProvider) return;
+    SEL rm = NSSelectorFromString(@"_removeAssertionForElement:");
+    if ([gManager respondsToSelector:rm]) {
+        @try { ((void (*)(id, SEL, id))objc_msgSend)(gManager, rm, gProvider); } @catch (...) {}
+    }
+    if (gAssertion) {
         SEL inv = NSSelectorFromString(@"invalidate");
         if ([gAssertion respondsToSelector:inv]) {
-            ((void (*)(id, SEL))objc_msgSend)(gAssertion, inv);
-            PLog(@"[reg] 已注销自己的 element");
+            @try { ((void (*)(id, SEL))objc_msgSend)(gAssertion, inv); } @catch (...) {}
         }
-    } @catch (NSException *e) { PLog(@"[reg] 注销异常 %@", e.reason); }
+    }
+}
+
+static void KZUnregister(void) {
+    if (gProvider) {
+        KZRemoveOwnElement();
+        PLog(@"[reg] 已移除自己的 element");
+    }
     gAssertion = nil;
     gProvider = nil;
     gSuppressOn = NO;
@@ -427,19 +511,13 @@ static void KZRegister(void) {
     if (!KZPrefBool(@"enabled", YES)) return;
     @try {
         gProvider = [[KZElementProvider alloc] init];
-        // 先注册我们的，再开抑制 —— 顺序很重要：我们的 element 必须先占位
+
         SEL reg = NSSelectorFromString(@"registerElement:");
         id a = ((id (*)(id, SEL, id))objc_msgSend)(gManager, reg, gProvider);
         gAssertion = a;
         gSuppressOn = (a != nil);
-        PLog(@"[reg] registerElement -> %@ (抑制=%@)",
-             a ? NSStringFromClass([a class]) : @"nil", gSuppressOn ? @"开" : @"关");
+        PLog(@"[reg] 注册 -> %@（抑制=%@）", a ? NSStringFromClass([a class]) : @"nil", gSuppressOn ? @"开" : @"关");
 
-        SEL as = NSSelectorFromString(@"_assertionForElementCreatingIfNecessary:");
-        if ([gManager respondsToSelector:as]) {
-            id a2 = ((id (*)(id, SEL, id))objc_msgSend)(gManager, as, gProvider);
-            if (a2) { gAssertion = a2; }
-        }
         SEL rg = NSSelectorFromString(@"registeredElements");
         if ([gManager respondsToSelector:rg]) {
             NSArray *rs = ((id (*)(id, SEL))objc_msgSend)(gManager, rg);
@@ -447,13 +525,12 @@ static void KZRegister(void) {
             for (id e in rs) [m appendFormat:@"%@ ", KZElemIdent(e) ?: @"?"];
             PLog(@"[reg] registeredElements=%lu -> %@", (unsigned long)rs.count, m);
         }
-        // 请求宽布局
+
+        if (gSuppressOn) KZPurgeSystemRecordingElements();
+
         SEL setL = NSSelectorFromString(@"setLayoutMode:reason:forTargetWithOverrider:");
         if ([gManager respondsToSelector:setL]) {
-            @try {
-                ((void (*)(id, SEL, long, long, id))objc_msgSend)(gManager, setL, 2, 0, gProvider);
-                PLog(@"[reg] setLayoutMode:2");
-            } @catch (NSException *e) { PLog(@"[reg] setLayoutMode 异常 %@", e.reason); }
+            @try { ((void (*)(id, SEL, long, long, id))objc_msgSend)(gManager, setL, 2, 0, gProvider); } @catch (...) {}
         }
         SEL inval = NSSelectorFromString(@"invalidatePromotedElements");
         if ([gManager respondsToSelector:inval]) {
@@ -466,28 +543,33 @@ static void KZRegister(void) {
     }
 }
 
-#pragma mark - 安装 hook
+#pragma mark - hooks
 
-static BOOL gHookManager = NO;
-static void KZInstallManagerHook(void) {
-    if (gHookManager) return;
-    Class c = NSClassFromString(@"SAUISystemApertureManager");
-    if (!c) { KZOnce(@"nomgr", @"[hook] 没有 SAUISystemApertureManager"); return; }
-
+static BOOL gHookDone = NO;
+static void KZInstallHooks(void) {
+    if (gHookDone) return;
+    int n = 0;
     SEL reg = NSSelectorFromString(@"registerElement:");
-    if ([c instancesRespondToSelector:reg]) {
-        MSHookMessageEx(c, reg, (IMP)kzRegister, (IMP *)&origRegister);
-        KZOnce(@"hookreg", @"[hook] hook registerElement:（用于吞掉系统录屏）");
+
+    Class vc = NSClassFromString(@"SBSystemApertureViewController");
+    if (vc && [vc instancesRespondToSelector:reg]) {
+        MSHookMessageEx(vc, reg, (IMP)kzRegVC, (IMP *)&origRegVC);
+        n++;
+        PLog(@"[hook] SBSystemApertureViewController registerElement:");
     }
-    SEL prom = NSSelectorFromString(@"invalidatePromotedElements");
-    if ([c instancesRespondToSelector:prom]) {
-        MSHookMessageEx(c, prom, (IMP)kzPromote, (IMP *)&origPromote);
+    Class mgr = NSClassFromString(@"SAUISystemApertureManager");
+    if (mgr && [mgr instancesRespondToSelector:reg]) {
+        MSHookMessageEx(mgr, reg, (IMP)kzRegMgr, (IMP *)&origRegMgr);
+        n++;
+        PLog(@"[hook] SAUISystemApertureManager registerElement:");
     }
-    SEL will = NSSelectorFromString(@"hostWillPerformLayout");
-    if ([c instancesRespondToSelector:will]) {
-        MSHookMessageEx(c, will, (IMP)kzWillLayout, (IMP *)&origWillLayout);
+    if (mgr) {
+        SEL prom = NSSelectorFromString(@"invalidatePromotedElements");
+        if ([mgr instancesRespondToSelector:prom]) {
+            MSHookMessageEx(mgr, prom, (IMP)kzPromote, (IMP *)&origPromote);
+        }
     }
-    gHookManager = YES;
+    if (n) { gHookDone = YES; PLog(@"[hook] 共 %d 个 registerElement", n); }
 }
 
 #pragma mark - 主循环
@@ -496,37 +578,51 @@ static NSTimer *gTimer = nil;
 static BOOL gWasCaptured = NO;
 
 static void KZTick(void) {
-    KZInstallManagerHook();
+    KZInstallHooks();
     BOOL cap = KZCaptured();
     if (cap && !gWasCaptured) {
         gWasCaptured = YES;
         gStartAt = CFAbsoluteTimeGetCurrent();
+        gPaused = NO; gPausedAt = 0; gPausedTotal = 0;
         gSeen = nil;
-        PLog(@"[state] 录屏开始，准备注册");
-        // 等系统把它的录屏 element 建出来再动手（否则我们抢先注册会被挤）
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)),
+        PLog(@"[state] 录屏开始");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.2 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-            if (KZCaptured()) KZRegister();
+            if (!KZCaptured()) return;
+            KZRegister();
+            // 注册后持续清理系统录屏 element（防它重建）
+            for (int i = 0; i < 12; i++) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((0.4 + i * 0.35) * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), ^{
+                    if (KZCaptured() && gSuppressOn) KZPurgeSystemRecordingElements();
+                });
+            }
         });
     } else if (!cap && gWasCaptured) {
         gWasCaptured = NO;
         gStartAt = 0;
+        gPaused = NO;
         gSeen = nil;
         KZUnregister();
         PLog(@"[state] 录屏结束");
+    } else if (cap && gSuppressOn) {
+        // 录屏中定期清理（系统可能在暂停/恢复时重建）
+        static int tickCount = 0;
+        if (++tickCount % 4 == 0) KZPurgeSystemRecordingElements();
     }
 }
 
 static void KZReapply(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         gSeen = nil;
-        PLog(@"[apply] scale=%.2f offX=%.1f dur=%.2f timer=%d",
-             KZPrefNum(@"scale", 1.0), KZPrefNum(@"offX", 0.0),
-             KZPrefNum(@"duration", 1.5), KZPrefBool(@"showTimer", YES));
-        if (gProvider) {          // 重建：注销再注册，让新尺寸/新素材生效
+        PLog(@"[apply] scale=%.2f offX=%.1f dur=%.2f", KZPrefNum(@"scale", 1.0),
+             KZPrefNum(@"offX", 0.0), KZPrefNum(@"duration", 1.5));
+        if (gProvider) {
             KZUnregister();
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{ if (KZCaptured()) KZRegister(); });
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                if (KZCaptured()) { KZRegister(); }
+            });
         }
     });
 }
@@ -535,13 +631,13 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.44 (o2pro: own element + suppress system)");
+    PLog(@"ctor v1.45 (purge system element, precise taps)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        KZInstallManagerHook();
+        KZInstallHooks();
         if (!gTimer || !gTimer.valid) {
-            gTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) {
+            gTimer = [NSTimer scheduledTimerWithTimeInterval(0.5 repeats:YES block:^(NSTimer *t) {
                 @try { KZTick(); } @catch (NSException *e) { PLog(@"[tick] %@", e.reason); }
             }];
             [[NSRunLoop mainRunLoop] addTimer:gTimer forMode:NSRunLoopCommonModes];
