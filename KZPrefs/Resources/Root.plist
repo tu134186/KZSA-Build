@@ -15,7 +15,7 @@
 			<key>key</key><string>eyePreset</string>
 			<key>default</key><integer>0</integer>
 			<key>presetPicker</key><true/>
-			<key>height</key><integer>156</integer>
+			<key>height</key><integer>130</integer>
 		</dict>
 		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>导入自定义图片</string><key>action</key><string>importPhoto</string></dict>
 		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>删除自定义图片</string><key>action</key><string>deleteCustom</string></dict>
