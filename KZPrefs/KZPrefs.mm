@@ -196,10 +196,8 @@ static NSArray<NSString *> *KZPresetNames(void) {
     return a;
 }
 
-static NSInteger KZPresetTotal(void) { return kKZPresetCount + (NSInteger)KZCustomList().count; }
 
 static BOOL gPresetEditMode = NO;
-static NSInteger gPresetPage = 0;   // 0 = 第一页(0-4), 1 = 第二页(5-9) ...
 
 @interface KZPresetCell : PSTableCell
 @end
