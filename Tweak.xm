@@ -29,6 +29,8 @@ static id gProvider = nil;
 static __unsafe_unretained id gActivityHost = nil;
 static __unsafe_unretained id gElementHost = nil;
 static BOOL gLaunched = NO;
+static BOOL gRegistered = NO;
+static BOOL gLastCaptured = NO;
 static double gLaunchAt = 0;
 static double gCtorAt = 0;
 static void KZRegisterOnce(void);
@@ -111,7 +113,10 @@ static void kzPromote(id self, SEL _cmd) {
 
 @end
 
-@implementation KZElementProvider
+@implementation KZElementProvider {
+    UIView *_kzLeading;
+    UIView *_kzMinimal;
+}
 
 - (NSString *)elementIdentifier { return @"KZSharinganElement"; }
 - (NSString *)identifier { return @"KZSharinganElement"; }
@@ -153,10 +158,23 @@ static UIImage *KZEyeImage(void) {
     return v;
 }
 
-- (UIView *)leadingView { PLog(@"[prov] leadingView"); return [self kzMakeView]; }
+// 1.31：视图必须缓存。每次调用都 new 一个的话，岛 morph 时会拿到不同实例，
+// 旧实例残留在动画层上 = 用户看到的“有个东西在飘”。
+- (UIView *)leadingView {
+    PLog(@"[prov] leadingView");
+    if (!_kzLeading) _kzLeading = [self kzMakeView];
+    return _kzLeading;
+}
 - (UIView *)trailingView { return nil; }
-- (UIView *)minimalView { PLog(@"[prov] minimalView"); return [self kzMakeView]; }
-- (UIView *)expandedLeadingView { return [self kzMakeView]; }
+- (UIView *)minimalView {
+    PLog(@"[prov] minimalView");
+    if (!_kzMinimal) _kzMinimal = [self kzMakeView];
+    return _kzMinimal;
+}
+- (UIView *)expandedLeadingView {
+    if (!_kzLeading) _kzLeading = [self kzMakeView];
+    return _kzLeading;
+}
 - (UIView *)expandedTrailingView { return nil; }
 
 - (NSInteger)preferredLayoutMode { PLog(@"[prov] preferredLayoutMode"); return 2; }
@@ -320,13 +338,39 @@ static void KZProbeAuthority(id mgr) {
     } @catch (NSException *e) { PLog(@"[au] 异常 %@", e.reason); }
 }
 
+static BOOL KZIsCaptured(void) {
+    BOOL cap = NO;
+    @try {
+        for (UIScreen *sc in [UIScreen screens]) {
+            if (sc.isCaptured) { cap = YES; break; }
+        }
+    } @catch (NSException *e) {}
+    return cap;
+}
+
+static void KZUnregister(void) {
+    if (!gRegistered) return;
+    gRegistered = NO;
+    @try {
+        SEL inv = NSSelectorFromString(@"invalidate");
+        if (gAssertion && [gAssertion respondsToSelector:inv]) {
+            ((void (*)(id, SEL))objc_msgSend)(gAssertion, inv);
+            PLog(@"[reg] 录屏结束 -> invalidate assertion");
+        }
+    } @catch (NSException *e) { PLog(@"[reg] invalidate 异常 %@", e.reason); }
+    gAssertion = nil;
+    gProvider = nil;
+    gVCNilCount = 0;
+    gVCGaveUp = NO;
+}
+
 static void KZRegisterOnce(void) {
-    static BOOL done = NO;
-    if (done || !gManager) return;
+    if (gRegistered || !gManager) return;
     // 1.28：必须等 SpringBoard 启动完成后再注册，否则会在启动过程中创建 element/VC 把 SpringBoard 搞崩
     if (!gLaunched) return;
     if (gLaunchAt > 0 && CACurrentMediaTime() - gLaunchAt < 2.0) return;
-    done = YES;
+    // 1.31：只在系统录屏时注册，平时完全不影响灵动岛
+    if (!KZIsCaptured()) return;
     @try {
         gProvider = [[KZElementProvider alloc] init];
         KZProbeAuthority(gManager);
@@ -336,6 +380,7 @@ static void KZRegisterOnce(void) {
         SEL as = NSSelectorFromString(@"_assertionForElementCreatingIfNecessary:");
         id a = ((id (*)(id, SEL, id))objc_msgSend)(gManager, as, gProvider);
         gAssertion = a;
+        gRegistered = (a != nil);
         PLog(@"[reg] assertion = %@", a ? NSStringFromClass([a class]) : @"nil");
         SEL rg = NSSelectorFromString(@"registeredElements");
         if ([gManager respondsToSelector:rg]) {
@@ -452,7 +497,7 @@ static void KZReport(void) {
 
 %ctor {
     gCtorAt = CACurrentMediaTime();
-    PLog(@"ctor v1.30 (visible + order diag)");
+    PLog(@"ctor v1.31 (cached views + capture gate)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
@@ -463,7 +508,12 @@ static void KZReport(void) {
                     PLog(@"[boot] fallback 启动判定（didFinishLaunching 未触发）");
                 }
                 KZTryHook();
-                KZRegisterOnce();
+                BOOL cap = KZIsCaptured();
+                if (cap != gLastCaptured) {
+                    gLastCaptured = cap;
+                    PLog(@"[state] captured=%d", cap);
+                }
+                if (cap) KZRegisterOnce(); else KZUnregister();
                 KZReport();
             } @catch (...) {
                 PLog(@"[tick] 异常已忽略");
