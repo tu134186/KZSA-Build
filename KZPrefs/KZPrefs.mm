@@ -303,9 +303,81 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
 
 @end
 
+#pragma mark - 素材子页面（把 8 套收纳进来）
+
+@interface KZPresetListController : PSListController
+@end
+
+@implementation KZPresetListController
+
+- (id)specifiers {
+    if (_specifiers == nil) {
+        NSMutableArray *arr = [NSMutableArray array];
+        PSSpecifier *g = [PSSpecifier groupSpecifierWithName:@"点一下立即替换"];
+        [arr addObject:g];
+
+        PSSpecifier *pick = [PSSpecifier preferenceSpecifierNamed:@"素材"
+                                                           target:self
+                                                              set:nil
+                                                              get:nil
+                                                           detail:nil
+                                                             cell:PSTableCell
+                                                             edit:nil];
+        Class pc = NSClassFromString(@"KZPresetCell");
+        [pick setProperty:pc forKey:@"cellClass"];
+        if ([pick respondsToSelector:@selector(setCellClass:)]) [pick setCellClass:pc];
+        [pick setProperty:@(132.0) forKey:@"height"];
+        [pick setProperty:@YES forKey:@"presetPicker"];
+        [arr addObject:pick];
+
+        PSSpecifier *imp = [PSSpecifier preferenceSpecifierNamed:@"导入自定义图片"
+                                                          target:self set:nil get:nil detail:nil
+                                                            cell:PSButtonCell edit:nil];
+        [imp setButtonAction:@selector(importPhoto)];
+        [arr addObject:imp];
+
+        PSSpecifier *del = [PSSpecifier preferenceSpecifierNamed:@"删除自定义图片"
+                                                          target:self set:nil get:nil detail:nil
+                                                            cell:PSButtonCell edit:nil];
+        [del setButtonAction:@selector(deleteCustom)];
+        [arr addObject:del];
+
+        PSSpecifier *note = [PSSpecifier groupSpecifierWithName:nil];
+        [note setProperty:@"图片会自动裁成正方形并压缩，导入后可随时删除。" forKey:@"footerText"];
+        [arr addObject:note];
+
+        _specifiers = arr;
+    }
+    return _specifiers;
+}
+
+- (void)importPhoto {
+    UIResponder *r = self;
+    while (r && ![r isKindOfClass:[KZRootListController class]]) r = r.nextResponder;
+    if ([r isKindOfClass:[KZRootListController class]])
+        [(KZRootListController *)r importPhoto];
+}
+
+- (void)deleteCustom {
+    UIResponder *r = self;
+    while (r && ![r isKindOfClass:[KZRootListController class]]) r = r.nextResponder;
+    if ([r isKindOfClass:[KZRootListController class]])
+        [(KZRootListController *)r deleteCustom];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    KZPresetInvalidateCache();
+    [self reloadSpecifiers];
+}
+
+@end
+
 #pragma mark - 控制器
 
 @interface KZRootListController : PSListController <UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate>
+- (void)importPhoto;
+- (void)deleteCustom;
 @end
 
 @implementation KZRootListController
