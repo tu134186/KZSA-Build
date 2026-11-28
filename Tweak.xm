@@ -207,7 +207,7 @@ static void KZReport(void) {
 %end
 
 %ctor {
-    PLog(@"ctor v1.24 (register element)");
+    PLog(@"ctor v1.25 (authority probe)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
