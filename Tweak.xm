@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
 #import <substrate.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
@@ -24,6 +25,8 @@ static void PLog(NSString *fmt, ...) {
 
 static id gManager = nil;
 static id gProvider = nil;
+static BOOL gLaunched = NO;
+static double gLaunchAt = 0;
 static void KZRegisterOnce(void);
 static void KZProbeAuthority(id mgr);
 static BOOL (*origNeg)(id, SEL, id);
@@ -242,6 +245,9 @@ static void KZProbeAuthority(id mgr) {
 static void KZRegisterOnce(void) {
     static BOOL done = NO;
     if (done || !gManager) return;
+    // 1.28：必须等 SpringBoard 启动完成后再注册，否则会在启动过程中创建 element/VC 把 SpringBoard 搞崩
+    if (!gLaunched) return;
+    if (gLaunchAt > 0 && CACurrentMediaTime() - gLaunchAt < 2.0) return;
     done = YES;
     @try {
         gProvider = [[KZElementProvider alloc] init];
@@ -336,18 +342,21 @@ static void KZReport(void) {
 
 - (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
     BOOL r = %orig;
-    PLog(@"springboard launched (v1.19)");
+    gLaunched = YES;
+    gLaunchAt = CACurrentMediaTime();
+    PLog(@"[boot] SpringBoard didFinishLaunching");
     return r;
 }
 
 %end
 
 %ctor {
-    PLog(@"ctor v1.27 (authority ivar probe)");
+    PLog(@"ctor v1.28 (launch-gated)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
                 KZTryHook();
+                KZRegisterOnce();
                 KZReport();
             } @catch (...) {
                 PLog(@"[tick] 异常已忽略");
