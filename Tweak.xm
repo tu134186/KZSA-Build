@@ -68,7 +68,8 @@ static UIImage *KZBase64Image(const char *b64) {
     return d.length > 200 ? [UIImage imageWithData:d] : nil;
 }
 
-// preset 0..7 = 内置 8 套；8 = 用户导入；其它 → 0
+// preset 0..7 = 内置 8 套；8+ = 用户导入的数组下标
+static NSArray *KZCustomList(void);
 
 static UIImage *KZImageForPreset(NSInteger preset) {
     static NSMutableArray *cache = nil;
@@ -84,12 +85,16 @@ static UIImage *KZImageForPreset(NSInteger preset) {
             if (img) { cache[preset] = img; return img; }
             return nil;
         }
-        // 自定义
-        NSString *b64 = KZPrefStr(@"eyeImage");
-        if (b64.length > 200) {
-            NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
-            UIImage *u = d.length > 200 ? [UIImage imageWithData:d] : nil;
-            if (u) return u;
+        // 自定义（数组）
+        NSArray *customs = KZCustomList();
+        NSInteger ci = preset - kKZPresetCount;
+        if (ci >= 0 && ci < (NSInteger)customs.count) {
+            NSString *b64 = customs[ci];
+            if ([b64 isKindOfClass:[NSString class]] && b64.length > 200) {
+                NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
+                UIImage *u = d.length > 200 ? [UIImage imageWithData:d] : nil;
+                if (u) return u;
+            }
         }
         // 回退第一套
         id c0 = cache.count ? cache[0] : [NSNull null];
@@ -100,10 +105,21 @@ static UIImage *KZImageForPreset(NSInteger preset) {
     }
 }
 
+static NSArray *KZCustomList(void) {
+    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("eyeCustoms"), CFSTR(KZ_PREF_DOMAIN));
+    id obj = v ? (__bridge_transfer id)v : nil;
+    if ([obj isKindOfClass:[NSArray class]]) return obj;
+    // 兼容旧版单张
+    NSString *b64 = KZPrefStr(@"eyeImage");
+    if (b64.length > 200) return @[b64];
+    return @[];
+}
+
 static NSInteger KZPreset(void) {
     double p = KZPrefNum(@"eyePreset", 0);
     NSInteger v = (NSInteger)round(p);
-    if (v < 0 || v > kKZPresetCount) v = 0;
+    NSInteger max = kKZPresetCount + (NSInteger)KZCustomList().count;
+    if (v < 0 || v >= max) v = 0;
     return v;
 }
 
@@ -557,7 +573,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.50 (one eye per pill, switch works)");
+    PLog(@"ctor v1.51 (multi custom, edit mode)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
