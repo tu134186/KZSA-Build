@@ -33,6 +33,7 @@ static double gLaunchAt = 0;
 static double gCtorAt = 0;
 static void KZRegisterOnce(void);
 static void KZProbeAuthority(id mgr);
+static void KZReportOrder(void);
 static BOOL (*origNeg)(id, SEL, id);
 static BOOL kzNeg(id self, SEL _cmd, id elem);
 static id (*origElemVC)(id, SEL, id);
