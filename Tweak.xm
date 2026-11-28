@@ -48,7 +48,7 @@ static double KZPrefNum(NSString *key, double dflt) {
     if ([v isKindOfClass:[NSString class]]) return [(NSString *)v doubleValue];
     return dflt;
 }
-static BOOL KZPrefBool(NSString *key, BOOL dflt) {
+__attribute__((unused)) static BOOL KZPrefBool(NSString *key, BOOL dflt) {
     id v = KZPrefRaw(key);
     return [v isKindOfClass:[NSNumber class]] ? [v boolValue] : dflt;
 }
