@@ -160,6 +160,19 @@ static NSArray *_kzPresetCache = nil;
 
 static void KZPresetInvalidateCache(void) { _kzPresetCache = nil; }
 
+static NSArray<NSString *> *KZCustomList(void) {
+    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("eyeCustoms"), CFSTR(KZ_DOMAIN));
+    id obj = v ? (__bridge_transfer id)v : nil;
+    if ([obj isKindOfClass:[NSArray class]]) return obj;
+    return @[];
+}
+
+static UIImage *KZImageFromB64(NSString *b64) {
+    if (b64.length < 200) return nil;
+    NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    return d.length > 200 ? [UIImage imageWithData:d] : nil;
+}
+
 static NSArray<UIImage *> *KZPresetImages(void) {
     if (_kzPresetCache) return _kzPresetCache;
     NSMutableArray *a = [NSMutableArray array];
@@ -167,13 +180,10 @@ static NSArray<UIImage *> *KZPresetImages(void) {
         UIImage *u = KZPBase64(kKZPresetB64[i]);
         [a addObject:u ?: [UIImage new]];
     }
-    NSString *b64 = KZPrefStr(@"eyeImage");
-    UIImage *custom = nil;
-    if (b64.length > 200) {
-        NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
-        if (d.length > 200) custom = [UIImage imageWithData:d];
+    for (NSString *b64 in KZCustomList()) {
+        UIImage *u = KZImageFromB64(b64);
+        if (u) [a addObject:u];
     }
-    [a addObject:custom ?: [UIImage new]];
     _kzPresetCache = a;
     return a;
 }
@@ -181,17 +191,24 @@ static NSArray<UIImage *> *KZPresetImages(void) {
 static NSArray<NSString *> *KZPresetNames(void) {
     NSMutableArray *a = [NSMutableArray array];
     for (int i = 0; i < kKZPresetCount; i++) [a addObject:[NSString stringWithUTF8String:kKZPresetNames[i]]];
-    [a addObject:@"自定义"];
+    NSInteger n = (NSInteger)KZCustomList().count;
+    for (NSInteger i = 0; i < n; i++) [a addObject:[NSString stringWithFormat:@"自定%ld", (long)(i + 1)]];
     return a;
 }
 
-static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200; }
+static NSInteger KZPresetTotal(void) { return kKZPresetCount + (NSInteger)KZCustomList().count; }
+
+static BOOL gPresetEditMode = NO;
+static NSInteger gPresetPage = 0;   // 0 = 第一页(0-4), 1 = 第二页(5-9) ...
 
 @interface KZPresetCell : PSTableCell
 @end
 
 @implementation KZPresetCell {
+    NSMutableArray<UIControl *> *_wraps;
     NSMutableArray<UIButton *> *_btns;
+    NSMutableArray<UILabel *> *_badges;
+    NSMutableArray<UILabel *> *_labels;
 }
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style
@@ -200,8 +217,10 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
     self = [super initWithStyle:style reuseIdentifier:reuseIdentifier specifier:specifier];
     if (self) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
-        self.backgroundColor = [UIColor clearColor];
+        _wraps = [NSMutableArray array];
         _btns = [NSMutableArray array];
+        _badges = [NSMutableArray array];
+        _labels = [NSMutableArray array];
 
         NSArray<UIImage *> *imgs = KZPresetImages();
         NSArray<NSString *> *names = KZPresetNames();
@@ -213,24 +232,40 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
             b.backgroundColor = [UIColor blackColor];
             b.imageView.contentMode = UIViewContentModeScaleAspectFill;
             [b setImage:imgs[i] forState:UIControlStateNormal];
+            b.userInteractionEnabled = NO;
 
             UILabel *lb = [[UILabel alloc] init];
             lb.text = names[i];
-            lb.font = [UIFont systemFontOfSize:10 weight:UIFontWeightRegular];
+            lb.font = [UIFont systemFontOfSize:9 weight:UIFontWeightRegular];
             lb.textColor = [UIColor secondaryLabelColor];
             lb.textAlignment = NSTextAlignmentCenter;
-            lb.tag = 100;
-            lb.userInteractionEnabled = NO;
             [b addSubview:lb];
 
-            // 用外层包装实现「缩略图 + 下面文字」一起点击
+            // 红色减号徽标（编辑模式显示，只给自定义素材）
+            UILabel *badge = [[UILabel alloc] init];
+            badge.text = @"−";
+            badge.textColor = [UIColor whiteColor];
+            badge.backgroundColor = [UIColor systemRedColor];
+            badge.font = [UIFont boldSystemFontOfSize:13];
+            badge.textAlignment = NSTextAlignmentCenter;
+            badge.layer.cornerRadius = 9;
+            badge.layer.masksToBounds = YES;
+            badge.userInteractionEnabled = NO;
+            badge.hidden = YES;
+
             UIControl *wrap = [[UIControl alloc] init];
             wrap.tag = i;
             [wrap addSubview:b];
-            [wrap addTarget:self action:@selector(pickWrap:) forControlEvents:UIControlEventTouchUpInside];
+            [wrap addSubview:badge];
+            [wrap addTarget:self action:@selector(tapWrap:) forControlEvents:UIControlEventTouchUpInside];
+            UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPress:)];
+            [wrap addGestureRecognizer:lp];
+
             [self.contentView addSubview:wrap];
+            [_wraps addObject:wrap];
             [_btns addObject:b];
-            b.userInteractionEnabled = NO;
+            [_badges addObject:badge];
+            [_labels addObject:lb];
         }
         [self refreshCellContentsWithSpecifier:specifier];
     }
@@ -241,34 +276,73 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
     [super refreshCellContentsWithSpecifier:specifier];
     if (!_btns.count) return;
     NSInteger cur = (NSInteger)round([KZPrefStr(@"eyePreset") doubleValue]);
-    for (UIButton *b in _btns) {
-        BOOL sel = (b.tag == cur);
+    NSInteger total = (NSInteger)_btns.count;
+    for (NSInteger i = 0; i < total; i++) {
+        UIButton *b = _btns[i];
+        BOOL sel = (i == cur);
         b.layer.borderWidth = sel ? 2.5 : 0.0;
         b.layer.borderColor = sel ? [UIColor systemBlueColor].CGColor : [UIColor clearColor].CGColor;
         b.alpha = sel ? 1.0 : 0.85;
+
+        BOOL isCustom = (i >= kKZPresetCount);
+        UILabel *badge = _badges[i];
+        UIControl *wrap = _wraps[i];
+        if (gPresetEditMode && isCustom) {
+            badge.hidden = NO;
+            wrap.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.001];   // 保证可点击
+        } else {
+            badge.hidden = YES;
+        }
     }
 }
 
-- (void)pickWrap:(UIControl *)w {
+- (UIViewController *)hostVC {
+    UIResponder *r = self;
+    NSInteger guard = 0;
+    while (r && guard++ < 24) {
+        if ([r isKindOfClass:[UIViewController class]]) return (UIViewController *)r;
+        r = r.nextResponder;
+    }
+    return nil;
+}
+
+- (void)longPress:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    if (KZCustomList().count == 0) return;
+    gPresetEditMode = !gPresetEditMode;
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"KZPresetEditChanged" object:nil];
+}
+
+- (void)tapWrap:(UIControl *)w {
     NSInteger idx = w.tag;
-    if (idx == kKZPresetCount && !KZHasCustomImage()) {
-        // 没有自定义图时点「自定义」→ 直接去导入
-        [self sendActionToController:@"importPhoto"];
+    if (gPresetEditMode && idx >= kKZPresetCount) {
+        // 编辑模式下点的是自定义素材 → 删除
+        NSArray *list = KZCustomList();
+        NSInteger ci = idx - kKZPresetCount;
+        if (ci >= 0 && ci < (NSInteger)list.count) {
+            NSMutableArray *m = [list mutableCopy];
+            [m removeObjectAtIndex:ci];
+            KZPrefSet(@"eyeCustoms", m);
+            NSInteger cur = (NSInteger)round([KZPrefStr(@"eyePreset") doubleValue]);
+            if (cur >= kKZPresetCount + (NSInteger)m.count) KZPrefSet(@"eyePreset", @(0));
+            KZPost();
+            KZPresetInvalidateCache();
+            gPresetEditMode = NO;
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"KZPresetEditChanged" object:nil];
+            return;
+        }
         return;
     }
+    if (idx >= (NSInteger)_btns.count) return;
     KZPrefSet(@"eyePreset", @(idx));
     KZPost();
-    [self refreshCellContentsWithSpecifier:self.specifier];
-}
-
-- (void)sendActionToController:(NSString *)sel {
-    UIResponder *r = self;
-    while (r && ![r isKindOfClass:[PSListController class]]) r = r.nextResponder;
-    if ([r isKindOfClass:[PSListController class]]) {
-        SEL s = NSSelectorFromString(sel);
-        if ([r respondsToSelector:s]) {
-            ((void (*)(id, SEL))objc_msgSend)(r, s);
-        }
+    NSInteger total = (NSInteger)_btns.count;
+    for (NSInteger i = 0; i < total; i++) {
+        UIButton *b = _btns[i];
+        BOOL sel = (i == idx);
+        b.layer.borderWidth = sel ? 2.5 : 0.0;
+        b.layer.borderColor = sel ? [UIColor systemBlueColor].CGColor : [UIColor clearColor].CGColor;
+        b.alpha = sel ? 1.0 : 0.85;
     }
 }
 
@@ -287,16 +361,18 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
     CGFloat cellW = (avail - gap * (cols - 1)) / cols;
     CGFloat thumb = MIN(40.0, cellW);
 
-    for (NSInteger i = 0; i < (NSInteger)_btns.count; i++) {
+    for (NSInteger i = 0; i < (NSInteger)_wraps.count; i++) {
+        UIControl *wrap = _wraps[i];
         UIButton *btn = _btns[i];
-        UIControl *wrap = (UIControl *)btn.superview;
+        UILabel *badge = _badges[i];
+        UILabel *lb = _labels[i];
         NSInteger row = i / (NSInteger)cols;
         NSInteger col = i % (NSInteger)cols;
         CGFloat x = pad + col * (cellW + gap);
         CGFloat y = 4 + row * 62;
         wrap.frame = CGRectMake(x, y, cellW, 58);
         btn.frame = CGRectMake((cellW - thumb) / 2.0, 0, thumb, thumb);
-        UILabel *lb = [btn viewWithTag:100];
+        badge.frame = CGRectMake(btn.frame.origin.x, 0, 18, 18);
         lb.frame = CGRectMake(-4, thumb + 2, cellW + 8, 12);
     }
 }
@@ -321,7 +397,7 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
                                                               set:nil
                                                               get:nil
                                                            detail:nil
-                                                             cell:PSGroupCell
+                                                             cell:PSStaticTextCell
                                                              edit:nil];
         Class pc = NSClassFromString(@"KZPresetCell");
         [pick setProperty:pc forKey:@"cellClass"];
@@ -330,20 +406,20 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
         [pick setProperty:@YES forKey:@"presetPicker"];
         [arr addObject:pick];
 
-        PSSpecifier *imp = [PSSpecifier preferenceSpecifierNamed:@"导入自定义图片"
+        PSSpecifier *imp = [PSSpecifier preferenceSpecifierNamed:@"导入素材"
                                                           target:self set:nil get:nil detail:nil
                                                             cell:PSButtonCell edit:nil];
         [imp setButtonAction:@selector(importPhoto)];
         [arr addObject:imp];
 
-        PSSpecifier *del = [PSSpecifier preferenceSpecifierNamed:@"删除自定义图片"
+        PSSpecifier *del = [PSSpecifier preferenceSpecifierNamed:@"删除素材"
                                                           target:self set:nil get:nil detail:nil
                                                             cell:PSButtonCell edit:nil];
         [del setButtonAction:@selector(deleteCustom)];
         [arr addObject:del];
 
         PSSpecifier *note = [PSSpecifier groupSpecifierWithName:nil];
-        [note setProperty:@"图片会自动裁成正方形并压缩，导入后可随时删除。" forKey:@"footerText"];
+        [note setProperty:@"点一下就换；长按素材进入编辑模式，点红色 − 可逐个删除自定义素材。" forKey:@"footerText"];
         [arr addObject:note];
 
         _specifiers = arr;
@@ -353,7 +429,7 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
 
 - (void)forwardTo:(NSString *)sel {
     SEL s = NSSelectorFromString(sel);
-    UIResponder *r = self;
+    UIResponder *r = self.nextResponder;      // 必须跳过自己，否则自己调自己 → 无限递归崩溃
     NSInteger guard = 0;
     while (r && guard++ < 24) {
         if ([r respondsToSelector:s]) {
@@ -371,6 +447,23 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
     [super viewWillAppear:animated];
     KZPresetInvalidateCache();
     [self reloadSpecifiers];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(onEditChanged)
+                                                 name:@"KZPresetEditChanged"
+                                               object:nil];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"KZPresetEditChanged" object:nil];
+}
+
+- (void)onEditChanged {
+    for (UITableViewCell *c in [self.tableView visibleCells]) {
+        if ([c isKindOfClass:[KZPresetCell class]]) {
+            [(KZPresetCell *)c refreshCellContentsWithSpecifier:nil];
+        }
+    }
 }
 
 @end
@@ -457,8 +550,11 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
             use = UIImageJPEGRepresentation(out, 0.6);
         }
         if (!use) return;
-        KZPrefSet(@"eyeImage", [use base64EncodedStringWithOptions:0]);
-        KZPrefSet(@"eyePreset", @(kKZPresetCount));   // 自动切到「自定义」
+        NSMutableArray *list = [KZCustomList() mutableCopy];
+        if (list.count >= 8) [list removeObjectAtIndex:0];
+        [list addObject:[use base64EncodedStringWithOptions:0]];
+        KZPrefSet(@"eyeCustoms", list);
+        KZPrefSet(@"eyePreset", @(kKZPresetCount + (NSInteger)list.count - 1));   // 切到刚导入的
         KZPost();
         KZPresetInvalidateCache();
         [self reloadSpecifiers];
@@ -484,9 +580,9 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
 }
 
 - (void)deleteCustom {
-    KZPrefClear(@"eyeImage");
+    KZPrefClear(@"eyeCustoms");
     NSInteger cur = (NSInteger)round([KZPrefStr(@"eyePreset") doubleValue]);
-    if (cur == kKZPresetCount) KZPrefSet(@"eyePreset", @(0));
+    if (cur >= kKZPresetCount) KZPrefSet(@"eyePreset", @(0));
     KZPost();
     KZPresetInvalidateCache();
     [self reloadSpecifiers];
@@ -495,7 +591,7 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
 #pragma mark 其它
 
 - (void)resetAll {
-    KZPrefClear(@"eyeImage");
+    KZPrefClear(@"eyeCustoms");
     KZPrefClear(@"scale");
     KZPrefClear(@"offX");
     KZPrefClear(@"offY");
