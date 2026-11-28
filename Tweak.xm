@@ -24,6 +24,10 @@ static void PLog(NSString *fmt, ...) {
 
 static id gManager = nil;
 static void KZRegisterOnce(void);
+static BOOL (*origNeg)(id, SEL, id);
+static BOOL kzNeg(id self, SEL _cmd, id elem);
+static id (*origElemVC)(id, SEL, id);
+static id kzElemVC(id self, SEL _cmd, id elem);
 
 // 只在 manager 被创建时抓实例，不做任何遍历
 static id (*origInit)(id, SEL, id);
@@ -177,6 +181,18 @@ static void KZTryHook(void) {
         if (ok2) MSHookMessageEx(c, s2, (IMP)kzPromote, (IMP *)&origPromote);
         gHooked2 = YES;
         PLog(@"[hook] hostWillPerformLayout:%d invalidatePromotedElements:%d", ok1, ok2);
+
+        SEL nSel = NSSelectorFromString(@"elementRequestsNegativeResponse:");
+        if (class_getInstanceMethod(c, nSel)) {
+            MSHookMessageEx(c, nSel, (IMP)kzNeg, (IMP *)&origNeg);
+            PLog(@"[auth] hook negativeResponse");
+        } else PLog(@"[auth] negativeResponse 不存在");
+
+        SEL vSel = NSSelectorFromString(@"elementViewControllerForElement:");
+        if (class_getInstanceMethod(c, vSel)) {
+            MSHookMessageEx(c, vSel, (IMP)kzElemVC, (IMP *)&origElemVC);
+            PLog(@"[auth] hook elementViewControllerForElement");
+        } else PLog(@"[auth] elementViewControllerForElement 不存在");
     }
 }
 
