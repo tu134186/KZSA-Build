@@ -1,6 +1,6 @@
 Package: com.minis.kzsa
 Name: KZ SA Probe
-Version: 1.49
+Version: 1.50
 Architecture: iphoneos-arm64
 Description: 把系统录屏的红色指示点换成写轮眼素材，内置 8 套 + 自定义导入，可调速/大小/位置
 Maintainer: Minis
