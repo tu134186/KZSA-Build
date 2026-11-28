@@ -637,7 +637,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         KZInstallHooks();
         if (!gTimer || !gTimer.valid) {
-            gTimer = [NSTimer scheduledTimerWithTimeInterval(0.5 repeats:YES block:^(NSTimer *t) {
+            gTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) {
                 @try { KZTick(); } @catch (NSException *e) { PLog(@"[tick] %@", e.reason); }
             }];
             [[NSRunLoop mainRunLoop] addTimer:gTimer forMode:NSRunLoopCommonModes];
