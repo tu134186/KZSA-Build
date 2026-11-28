@@ -20,7 +20,7 @@ static NSMutableString *gDump = nil;
 static void KZFlush(void) {
     if (!gDump) return;
     CFPreferencesSetAppValue(CFSTR("dump"), (__bridge CFStringRef)[gDump copy], CFSTR(KZ_DOMAIN));
-    CFPreferencesSetAppValue(CFSTR("ver"), (__bridge CFStringRef)KZ_VER, CFSTR(KZ_DOMAIN));
+    CFPreferencesSetAppValue(CFSTR("ver"), (__bridge CFStringRef)[NSString stringWithUTF8String:KZ_VER], CFSTR(KZ_DOMAIN));
     CFPreferencesAppSynchronize(CFSTR(KZ_DOMAIN));
 }
 static void PLog(NSString *fmt, ...) {
