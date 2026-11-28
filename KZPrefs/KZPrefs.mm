@@ -305,12 +305,6 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
 
 #pragma mark - 素材子页面（把 8 套收纳进来）
 
-@class KZRootListController;
-@interface KZRootListController : PSListController
-- (void)importPhoto;
-- (void)deleteCustom;
-@end
-
 @interface KZPresetListController : PSListController
 @end
 
@@ -327,7 +321,7 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
                                                               set:nil
                                                               get:nil
                                                            detail:nil
-                                                             cell:-1
+                                                             cell:PSGroupCell
                                                              edit:nil];
         Class pc = NSClassFromString(@"KZPresetCell");
         [pick setProperty:pc forKey:@"cellClass"];
@@ -338,13 +332,13 @@ static BOOL KZHasCustomImage(void) { return KZPrefStr(@"eyeImage").length > 200;
 
         PSSpecifier *imp = [PSSpecifier preferenceSpecifierNamed:@"导入自定义图片"
                                                           target:self set:nil get:nil detail:nil
-                                                            cell:13 edit:nil];
+                                                            cell:PSButtonCell edit:nil];
         [imp setButtonAction:@selector(importPhoto)];
         [arr addObject:imp];
 
         PSSpecifier *del = [PSSpecifier preferenceSpecifierNamed:@"删除自定义图片"
                                                           target:self set:nil get:nil detail:nil
-                                                            cell:13 edit:nil];
+                                                            cell:PSButtonCell edit:nil];
         [del setButtonAction:@selector(deleteCustom)];
         [arr addObject:del];
 
