@@ -599,7 +599,11 @@ static BOOL gPresetEditMode = NO;
     if (types.count && [UIDocumentPickerViewController instancesRespondToSelector:@selector(initForOpeningContentTypes:)]) {
         d = ((id (*)(id, SEL, id))objc_msgSend)([UIDocumentPickerViewController alloc], @selector(initForOpeningContentTypes:), types);
     } else {
-        d = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.image"] inMode:UIDocumentPickerModeImport];
+        d = nil;
+    }
+    if (!d) {
+        [self alert:@"这个系统版本不支持从文件导入，请用相册"];
+        return;
     }
     d.delegate = self;
     d.allowsMultipleSelection = NO;
