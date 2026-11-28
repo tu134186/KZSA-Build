@@ -7,56 +7,56 @@
 	<array>
 		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>基本设置</string></dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>key</key><string>enabled</string><key>label</key><string>启用主题</string><key>default</key><true/><key>defaults</key><string>com.minis.kzsa</string></dict>
-		<dict><key>cell</key><string>PSStaticTextCell</string><key>key</key><string>eyeName</string><key>label</key><string>当前：内置写轮眼</string></dict>
-		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>选择素材</string><key>action</key><string>importPhoto</string></dict>
+
+		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>素材（点一下立即替换）</string></dict>
+		<dict>
+			<key>cell</key><string>PSTableCell</string>
+			<key>label</key><string>选择素材</string>
+			<key>key</key><string>eyePreset</string>
+			<key>default</key><integer>0</integer>
+			<key>presetPicker</key><true/>
+			<key>height</key><integer>84</integer>
+		</dict>
+		<dict><key>cell</key><string>PSStaticTextCell</string><key>key</key><string>eyeName</string><key>label</key><string>当前：原色写轮眼</string></dict>
+		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>导入自定义图片</string><key>action</key><string>importPhoto</string></dict>
 		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>打开目录</string><key>action</key><string>openFolder</string></dict>
 		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>注销生效</string><key>action</key><string>respring</string></dict>
 
-		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>动画</string></dict>
-		<dict><key>cell</key><string>PSSwitchCell</string><key>key</key><string>leftOn</string><key>label</key><string>左侧动画</string><key>default</key><true/><key>defaults</key><string>com.minis.kzsa</string></dict>
-		<dict><key>cell</key><string>PSSwitchCell</string><key>key</key><string>rightOn</string><key>label</key><string>右侧动画</string><key>default</key><true/><key>defaults</key><string>com.minis.kzsa</string></dict>
+		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>动画与尺寸</string></dict>
 		<dict>
 			<key>cell</key><string>PSTableCell</string>
 			<key>label</key><string>动画速度</string>
 			<key>key</key><string>duration</string>
 			<key>default</key><string>1.5</string>
-			<key>min</key><real>0.2</real><key>max</key><real>5.0</real><key>step</key><real>0.05</real>
+			<key>min</key><real>0.05</real><key>max</key><real>5.0</real><key>step</key><real>0.05</real>
 			<key>height</key><integer>44</integer>
 		</dict>
 		<dict>
 			<key>cell</key><string>PSTableCell</string>
-			<key>label</key><string>左侧大小</string>
+			<key>label</key><string>素材大小</string>
 			<key>key</key><string>scale</string>
 			<key>default</key><string>1.0</string>
-			<key>min</key><real>0.4</real><key>max</key><real>2.0</real><key>step</key><real>0.01</real>
+			<key>min</key><real>0.3</real><key>max</key><real>3.0</real><key>step</key><real>0.05</real>
 			<key>height</key><integer>44</integer>
 		</dict>
 		<dict>
 			<key>cell</key><string>PSTableCell</string>
-			<key>label</key><string>右侧大小</string>
-			<key>key</key><string>scaleR</string>
-			<key>default</key><string>0.95</string>
-			<key>min</key><real>0.4</real><key>max</key><real>2.0</real><key>step</key><real>0.01</real>
-			<key>height</key><integer>44</integer>
-		</dict>
-		<dict>
-			<key>cell</key><string>PSTableCell</string>
-			<key>label</key><string>左侧偏移</string>
+			<key>label</key><string>水平位置</string>
 			<key>key</key><string>offX</string>
 			<key>default</key><string>0.0</string>
-			<key>min</key><real>-6</real><key>max</key><real>6</real><key>step</key><real>0.1</real>
+			<key>min</key><real>-24</real><key>max</key><real>24</real><key>step</key><real>0.5</real>
 			<key>height</key><integer>44</integer>
 		</dict>
 		<dict>
 			<key>cell</key><string>PSTableCell</string>
-			<key>label</key><string>右侧偏移</string>
-			<key>key</key><string>offXR</string>
+			<key>label</key><string>垂直位置</string>
+			<key>key</key><string>offY</string>
 			<key>default</key><string>0.0</string>
-			<key>min</key><real>-6</real><key>max</key><real>6</real><key>step</key><real>0.1</real>
+			<key>min</key><real>-12</real><key>max</key><real>12</real><key>step</key><real>0.5</real>
 			<key>height</key><integer>44</integer>
 		</dict>
 
-		<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>素材自动裁成正方形；改完立即生效。</string></dict>
+		<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>素材自动裁成正方形；改动立即生效，不需要重启。</string></dict>
 		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>恢复默认</string><key>action</key><string>resetAll</string></dict>
 	</array>
 </dict>
