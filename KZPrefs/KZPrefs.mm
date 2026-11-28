@@ -161,7 +161,7 @@ static NSArray *_kzPresetCache = nil;
 static void KZPresetInvalidateCache(void) { _kzPresetCache = nil; }
 
 static NSArray<NSString *> *KZCustomList(void) {
-    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("eyeCustoms"), CFSTR(KZ_DOMAIN));
+    CFPropertyListRef v = CFPreferencesCopyAppValue((__bridge CFStringRef)@"eyeCustoms", (__bridge CFStringRef)KZ_DOMAIN);
     id obj = v ? (__bridge_transfer id)v : nil;
     if ([obj isKindOfClass:[NSArray class]]) return obj;
     return @[];
