@@ -2,60 +2,134 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>title</key><string>写轮眼</string>
 	<key>items</key>
 	<array>
-		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>基本设置</string></dict>
-		<dict><key>cell</key><string>PSSwitchCell</string><key>key</key><string>enabled</string><key>label</key><string>启用主题</string><key>default</key><true/><key>defaults</key><string>com.minis.kzsa</string></dict>
-
-		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>素材</string></dict>
 		<dict>
-			<key>cell</key><string>PSTableCell</string>
-			<key>label</key><string>选择素材</string>
-			<key>key</key><string>eyePreset</string>
-			<key>default</key><integer>0</integer>
-			<key>presetPicker</key><true/>
-			<key>height</key><integer>130</integer>
-		</dict>
-		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>导入自定义图片</string><key>action</key><string>importPhoto</string></dict>
-		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>删除自定义图片</string><key>action</key><string>deleteCustom</string></dict>
-
-		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>动画与尺寸</string></dict>
-		<dict>
-			<key>cell</key><string>PSTableCell</string>
-			<key>label</key><string>动画速度</string>
-			<key>key</key><string>duration</string>
-			<key>default</key><string>1.5</string>
-			<key>min</key><real>0.05</real><key>max</key><real>5.0</real><key>step</key><real>0.05</real>
-			<key>height</key><integer>44</integer>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>基本设置</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSTableCell</string>
-			<key>label</key><string>素材大小</string>
-			<key>key</key><string>scale</string>
-			<key>default</key><string>1.0</string>
-			<key>min</key><real>0.3</real><key>max</key><real>3.0</real><key>step</key><real>0.05</real>
-			<key>height</key><integer>44</integer>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.minis.kzsa</string>
+			<key>key</key>
+			<string>enabled</string>
+			<key>label</key>
+			<string>启用主题</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSTableCell</string>
-			<key>label</key><string>水平位置</string>
-			<key>key</key><string>offX</string>
-			<key>default</key><string>0.0</string>
-			<key>min</key><real>-24</real><key>max</key><real>24</real><key>step</key><real>0.5</real>
-			<key>height</key><integer>44</integer>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>素材</string>
 		</dict>
 		<dict>
-			<key>cell</key><string>PSTableCell</string>
-			<key>label</key><string>垂直位置</string>
-			<key>key</key><string>offY</string>
-			<key>default</key><string>0.0</string>
-			<key>min</key><real>-12</real><key>max</key><real>12</real><key>step</key><real>0.5</real>
-			<key>height</key><integer>44</integer>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>KZPresetListController</string>
+			<key>label</key>
+			<string>选择素材</string>
 		</dict>
-
-		<dict><key>cell</key><string>PSGroupCell</string><key>footerText</key><string>素材自动裁成正方形；改动立即生效，不需要重启。</string></dict>
-		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>恢复默认</string><key>action</key><string>resetAll</string></dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>动画与尺寸</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTableCell</string>
+			<key>default</key>
+			<string>1.5</string>
+			<key>height</key>
+			<integer>44</integer>
+			<key>key</key>
+			<string>duration</string>
+			<key>label</key>
+			<string>动画速度</string>
+			<key>max</key>
+			<real>5.0</real>
+			<key>min</key>
+			<real>0.05</real>
+			<key>step</key>
+			<real>0.05</real>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTableCell</string>
+			<key>default</key>
+			<string>1.0</string>
+			<key>height</key>
+			<integer>44</integer>
+			<key>key</key>
+			<string>scale</string>
+			<key>label</key>
+			<string>素材大小</string>
+			<key>max</key>
+			<real>3.0</real>
+			<key>min</key>
+			<real>0.3</real>
+			<key>step</key>
+			<real>0.05</real>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTableCell</string>
+			<key>default</key>
+			<string>0.0</string>
+			<key>height</key>
+			<integer>44</integer>
+			<key>key</key>
+			<string>offX</string>
+			<key>label</key>
+			<string>水平位置</string>
+			<key>max</key>
+			<real>24.0</real>
+			<key>min</key>
+			<real>-24.0</real>
+			<key>step</key>
+			<real>0.5</real>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSTableCell</string>
+			<key>default</key>
+			<string>0.0</string>
+			<key>height</key>
+			<integer>44</integer>
+			<key>key</key>
+			<string>offY</string>
+			<key>label</key>
+			<string>垂直位置</string>
+			<key>max</key>
+			<real>12.0</real>
+			<key>min</key>
+			<real>-12.0</real>
+			<key>step</key>
+			<real>0.5</real>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>素材自动裁成正方形；改动立即生效，不需要重启。</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>resetAll</string>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>恢复默认</string>
+		</dict>
 	</array>
+	<key>title</key>
+	<string>写轮眼</string>
 </dict>
 </plist>
