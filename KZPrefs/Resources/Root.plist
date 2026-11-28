@@ -8,19 +8,17 @@
 		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>基本设置</string></dict>
 		<dict><key>cell</key><string>PSSwitchCell</string><key>key</key><string>enabled</string><key>label</key><string>启用主题</string><key>default</key><true/><key>defaults</key><string>com.minis.kzsa</string></dict>
 
-		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>素材（点一下立即替换）</string></dict>
+		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>素材</string></dict>
 		<dict>
 			<key>cell</key><string>PSTableCell</string>
 			<key>label</key><string>选择素材</string>
 			<key>key</key><string>eyePreset</string>
 			<key>default</key><integer>0</integer>
 			<key>presetPicker</key><true/>
-			<key>height</key><integer>84</integer>
+			<key>height</key><integer>156</integer>
 		</dict>
-		<dict><key>cell</key><string>PSStaticTextCell</string><key>key</key><string>eyeName</string><key>label</key><string>当前：原色写轮眼</string></dict>
 		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>导入自定义图片</string><key>action</key><string>importPhoto</string></dict>
-		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>打开目录</string><key>action</key><string>openFolder</string></dict>
-		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>注销生效</string><key>action</key><string>respring</string></dict>
+		<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>删除自定义图片</string><key>action</key><string>deleteCustom</string></dict>
 
 		<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>动画与尺寸</string></dict>
 		<dict>
