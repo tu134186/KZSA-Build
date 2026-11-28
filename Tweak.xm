@@ -12,6 +12,7 @@
 #define KZ_PREF_DOMAIN "com.minis.kzsa"
 #define KZ_NOTIFY "com.minis.kzsa.changed"
 #define KZ_EYE_TAG 0x4B5A
+#define KZ_VER "1.53"
 
 #pragma mark - 日志
 
@@ -19,6 +20,7 @@ static NSMutableString *gDump = nil;
 static void KZFlush(void) {
     if (!gDump) return;
     CFPreferencesSetAppValue(CFSTR("dump"), (__bridge CFStringRef)[gDump copy], CFSTR(KZ_DOMAIN));
+    CFPreferencesSetAppValue(CFSTR("ver"), (__bridge CFStringRef)KZ_VER, CFSTR(KZ_DOMAIN));
     CFPreferencesAppSynchronize(CFSTR(KZ_DOMAIN));
 }
 static void PLog(NSString *fmt, ...) {
@@ -152,7 +154,7 @@ static BOOL KZRecordingActive(void) { return KZCaptured() || KZRecorderRecording
 
 // 倒计时保护：录屏开始后 3.3 秒内不注入，避免盖住系统 3-2-1 动画
 static double gActiveSince = 0;
-static double gEyeGate = 3.0;
+static double gEyeGate = 2.55;
 static BOOL KZEyeAllowed(void) {
     if (gActiveSince <= 0) return NO;
     return (CACurrentMediaTime() - gActiveSince) >= gEyeGate;
@@ -632,7 +634,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
     {
         Dl_info di; NSString *path = @"?";
         if (dladdr((void *)&KZTick, &di) && di.dli_fname) path = [NSString stringWithUTF8String:di.dli_fname];
-        PLog(@"ctor v1.52 (manager scan, instant switch) dylib=%@", path);
+        PLog(@"ctor v" KZ_VER " (fast gate, file import, dumpV) dylib=%@", path);
     }
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
