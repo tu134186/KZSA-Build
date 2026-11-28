@@ -20,7 +20,7 @@
 			<key>key</key>
 			<string>enabled</string>
 			<key>label</key>
-			<string>启用主题</string>
+			<string>启用插件</string>
 		</dict>
 		<dict>
 			<key>cell</key>
