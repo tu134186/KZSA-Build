@@ -251,6 +251,70 @@ static BOOL KZIsRecording(id elem) {
     return s.length > 0 && [s.lowercaseString containsString:@"screenrecording"];
 }
 
+#pragma mark - 主动扫描：不依赖系统再次调用 getter
+
+static void KZInjectInto(UIView *host, NSString *slot);
+
+static NSArray<UIWindow *> *KZAllWindows(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        for (UIScene *sc in [[UIApplication sharedApplication] connectedScenes]) {
+            if ([sc isKindOfClass:[UIWindowScene class]]) {
+                [out addObjectsFromArray:((UIWindowScene *)sc).windows];
+            }
+        }
+    } @catch (...) {}
+    return out;
+}
+
+static UIView *KZFindRecordingElementInTree(UIView *root, NSInteger depth) {
+    if (!root || depth > 16) return nil;
+    NSString *cn = NSStringFromClass(root.class);
+    if ([cn rangeOfString:@"SAUIElementView"].location != NSNotFound) {
+        Ivar iv = class_getInstanceVariable([root class], "_elementViewProvider");
+        id provider = iv ? object_getIvar(root, iv) : nil;
+        if (provider && KZIsRecording(provider)) return root;
+    }
+    for (UIView *sub in [root.subviews copy]) {
+        UIView *hit = KZFindRecordingElementInTree(sub, depth + 1);
+        if (hit) return hit;
+    }
+    return nil;
+}
+
+// 每 tick 主动去问 element 要一遍视图 —— getter 里会走我们的 hook 完成注入。
+// 这样即使系统重建了 accessory、或暂停后不再自动取视图，素材也能自己回来。
+static void KZRescanInject(void) {
+    for (UIWindow *w in KZAllWindows()) {
+        @try {
+            UIView *ev = KZFindRecordingElementInTree(w, 0);
+            if (!ev) continue;
+            Ivar iv = class_getInstanceVariable([ev class], "_elementViewProvider");
+            id elem = iv ? object_getIvar(ev, iv) : nil;
+            if (!elem) continue;
+
+            NSArray *sels = @[ @"leadingView", @"expandedLeadingView", @"minimalView" ];
+            for (NSString *name in sels) {
+                SEL sel = NSSelectorFromString(name);
+                if ([elem respondsToSelector:sel]) {
+                    @try { ((id (*)(id, SEL))objc_msgSend)(elem, sel); } @catch (...) {}
+                }
+            }
+            // 兜底：element 子树里所有 accessory 也扫一遍
+            NSMutableArray *stack = [NSMutableArray arrayWithObject:ev];
+            NSInteger guard = 0;
+            while (stack.count && guard++ < 400) {
+                UIView *v = [stack lastObject];
+                [stack removeLastObject];
+                if ([NSStringFromClass(v.class) containsString:@"SBSystemApertureSceneElementAccessoryView"]) {
+                    KZInjectInto(v, @"scan");
+                }
+                for (UIView *sub in v.subviews) [stack addObject:sub];
+            }
+        } @catch (...) {}
+    }
+}
+
 #pragma mark - 注入（纯叠加：红点被盖住，系统内容一律保留）
 
 static NSHashTable *gHosts = nil;
@@ -396,11 +460,13 @@ static void KZTick(void) {
     // 倒计时没走完，什么都不做（但 host 已经在 KZInjectInto 里登记过了）
     if (!KZEyeAllowed()) return;
 
-    // 每 tick 都补注入：morph 重建容器、暂停变宽、独立岛新建，都会走到这里
-    if (!gHosts) return;
-    for (UIView *h in [[gHosts allObjects] copy]) {
-        if (!h.window) continue;
-        KZInjectInto(h, @"tick");
+    // 每 tick 主动扫描并注入：不依赖系统再次调用 getter
+    KZRescanInject();
+    if (gHosts) {
+        for (UIView *h in [[gHosts allObjects] copy]) {
+            if (!h.window) continue;
+            KZInjectInto(h, @"tick");
+        }
     }
 }
 
@@ -423,14 +489,25 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.48 (stable pause, countdown gate)");
+    PLog(@"ctor v1.49 (active rescan, idle 1.2s)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         KZInstall();
         if (!gTimer || !gTimer.valid) {
-            gTimer = [NSTimer scheduledTimerWithTimeInterval:0.2 repeats:YES block:^(NSTimer *t) {
-                @try { KZTick(); } @catch (NSException *e) { PLog(@"[tick] %@", e.reason); }
+            gTimer = [NSTimer scheduledTimerWithTimeInterval:1.2 repeats:YES block:^(NSTimer *t) {
+                @try {
+                    KZTick();
+                    // 录屏中提速到 0.1s，结束后降回 1.2s，降低待机开销
+                    NSTimeInterval want = gWasActive ? 0.1 : 1.2;
+                    if (fabs(t.timeInterval - want) > 0.01) {
+                        [t invalidate];
+                        gTimer = [NSTimer scheduledTimerWithTimeInterval:want repeats:YES block:^(NSTimer *tt) {
+                            @try { KZTick(); } @catch (...) {}
+                        }];
+                        [[NSRunLoop mainRunLoop] addTimer:gTimer forMode:NSRunLoopCommonModes];
+                    }
+                } @catch (NSException *e) { PLog(@"[tick] %@", e.reason); }
             }];
             [[NSRunLoop mainRunLoop] addTimer:gTimer forMode:NSRunLoopCommonModes];
         }
