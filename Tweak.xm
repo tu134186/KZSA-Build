@@ -254,6 +254,8 @@ static BOOL KZIsRecording(id elem) {
 #pragma mark - 主动扫描：不依赖系统再次调用 getter
 
 static void KZInjectInto(UIView *host, NSString *slot);
+static UIView *KZPillAncestor(UIView *v);
+static NSHashTable *gLeadingPills;
 
 static NSArray<UIWindow *> *KZAllWindows(void) {
     NSMutableArray *out = [NSMutableArray array];
@@ -267,53 +269,85 @@ static NSArray<UIWindow *> *KZAllWindows(void) {
     return out;
 }
 
-static UIView *KZFindRecordingElementInTree(UIView *root, NSInteger depth) {
-    if (!root || depth > 16) return nil;
-    NSString *cn = NSStringFromClass(root.class);
-    if ([cn rangeOfString:@"SAUIElementView"].location != NSNotFound) {
-        Ivar iv = class_getInstanceVariable([root class], "_elementViewProvider");
-        id provider = iv ? object_getIvar(root, iv) : nil;
-        if (provider && KZIsRecording(provider)) return root;
+// 沿类继承链找 ivar（class_getInstanceVariable 在某些类上拿不到父类的）
+static id KZProviderOf(UIView *v) {
+    Class c = [v class];
+    while (c && c != [NSObject class]) {
+        Ivar iv = class_getInstanceVariable(c, "_elementViewProvider");
+        if (iv) {
+            id p = object_getIvar(v, iv);
+            if (p) return p;
+        }
+        c = class_getSuperclass(c);
     }
-    for (UIView *sub in [root.subviews copy]) {
-        UIView *hit = KZFindRecordingElementInTree(sub, depth + 1);
-        if (hit) return hit;
+    @try { return [v valueForKey:@"elementViewProvider"]; } @catch (...) {}
+    return nil;
+}
+
+// 往上找药丸容器（同一个容器 = 同一个岛）
+static UIView *KZPillAncestor(UIView *v) {
+    UIView *cur = v;
+    NSInteger hops = 0;
+    while (cur && hops++ < 14) {
+        NSString *cn = NSStringFromClass(cur.class);
+        if ([cn rangeOfString:@"SBSystemApertureContainerView"].location != NSNotFound &&
+            [cn rangeOfString:@"ContentView"].location == NSNotFound) {
+            return cur;
+        }
+        cur = cur.superview;
     }
     return nil;
 }
 
+
+// 扫全树里所有 accessory view，判定属于录屏 element 的就注入
+static NSInteger KZScanAccessories(void) {
+    NSInteger found = 0;
+    NSMutableArray *stack = [NSMutableArray array];
+    for (UIWindow *w in KZAllWindows()) [stack addObject:w];
+
+    NSMutableArray *hosts = [NSMutableArray array];
+    NSInteger guard = 0;
+    while (stack.count && guard++ < 6000) {
+        UIView *v = [stack lastObject];
+        [stack removeLastObject];
+        NSString *cn = NSStringFromClass(v.class);
+        if ([cn containsString:@"SBSystemApertureSceneElementAccessoryView"]) {
+            [hosts addObject:v];
+        }
+        for (UIView *sub in v.subviews) [stack addObject:sub];
+    }
+
+    for (UIView *host in hosts) {
+        if (!host.window) continue;
+        id provider = KZProviderOf(host);
+        if (!KZIsRecording(provider)) continue;
+        if (!gLeadingPills) gLeadingPills = [NSHashTable weakObjectsHashTable];
+        UIView *pill = KZPillAncestor(host);
+
+        // 同一个药丸里已经有写轮眼 → 说明这是右半边的槽位，跳过（避免一个岛里两个素材）
+        BOOL alreadyHasEye = NO;
+        for (UIView *s in host.subviews) {
+            if (s.tag == KZ_EYE_TAG) { alreadyHasEye = YES; break; }
+        }
+        BOOL pillTaken = (pill && [gLeadingPills containsObject:pill] && !alreadyHasEye);
+        if (pillTaken) {
+            // 把之前误注入的素材摘掉
+            for (UIView *s in [host.subviews copy]) {
+                if (s.tag == KZ_EYE_TAG) [s removeFromSuperview];
+            }
+            continue;
+        }
+        KZInjectInto(host, @"scan");
+        if (pill && !alreadyHasEye) [gLeadingPills addObject:pill];
+        found++;
+    }
+    return found;
+}
+
 // 每 tick 主动去问 element 要一遍视图 —— getter 里会走我们的 hook 完成注入。
 // 这样即使系统重建了 accessory、或暂停后不再自动取视图，素材也能自己回来。
-static void KZRescanInject(void) {
-    for (UIWindow *w in KZAllWindows()) {
-        @try {
-            UIView *ev = KZFindRecordingElementInTree(w, 0);
-            if (!ev) continue;
-            Ivar iv = class_getInstanceVariable([ev class], "_elementViewProvider");
-            id elem = iv ? object_getIvar(ev, iv) : nil;
-            if (!elem) continue;
-
-            NSArray *sels = @[ @"leadingView", @"expandedLeadingView", @"minimalView" ];
-            for (NSString *name in sels) {
-                SEL sel = NSSelectorFromString(name);
-                if ([elem respondsToSelector:sel]) {
-                    @try { ((id (*)(id, SEL))objc_msgSend)(elem, sel); } @catch (...) {}
-                }
-            }
-            // 兜底：element 子树里所有 accessory 也扫一遍
-            NSMutableArray *stack = [NSMutableArray arrayWithObject:ev];
-            NSInteger guard = 0;
-            while (stack.count && guard++ < 400) {
-                UIView *v = [stack lastObject];
-                [stack removeLastObject];
-                if ([NSStringFromClass(v.class) containsString:@"SBSystemApertureSceneElementAccessoryView"]) {
-                    KZInjectInto(v, @"scan");
-                }
-                for (UIView *sub in v.subviews) [stack addObject:sub];
-            }
-        } @catch (...) {}
-    }
-}
+static void KZRescanInject(void) { KZScanAccessories(); }
 
 #pragma mark - 注入（纯叠加：红点被盖住，系统内容一律保留）
 
@@ -347,6 +381,12 @@ static void KZInjectInto(UIView *host, NSString *slot) {
     [host bringSubviewToFront:eye];
     eye.hidden = NO;
     KZLayoutEye(eye, host);
+
+    UIView *pill = KZPillAncestor(host);
+    if (pill) {
+        if (!gLeadingPills) gLeadingPills = [NSHashTable weakObjectsHashTable];
+        [gLeadingPills addObject:pill];
+    }
 }
 
 #pragma mark - hooks
@@ -424,8 +464,34 @@ static NSTimer *gTimer = nil;
 static BOOL gWasActive = NO;
 static double gLastActiveAt = 0;
 
+static void KZRemoveAllEyes(void) {
+    if (!gHosts) return;
+    for (UIView *h in [[gHosts allObjects] copy]) {
+        for (UIView *s in [h.subviews copy]) {
+            if (s.tag == KZ_EYE_TAG) [s removeFromSuperview];
+        }
+    }
+    [gHosts removeAllObjects];
+    if (gLeadingPills) [gLeadingPills removeAllObjects];
+}
+
 static void KZTick(void) {
     KZInstall();
+
+    // 总开关：关掉就立刻把所有素材摘掉（不需要等录屏结束）
+    if (!KZPrefBool(@"enabled", YES)) {
+        static BOOL cleared = NO;
+        if (!cleared) {
+            cleared = YES;
+            KZRemoveAllEyes();
+            PLog(@"[switch] 总开关关闭，已移除全部素材");
+        }
+        return;
+    } else {
+        static BOOL loggedOn = NO;
+        if (!loggedOn) { loggedOn = YES; PLog(@"[switch] 总开关开启"); }
+    }
+
     BOOL active = KZRecordingActive();
     double now = CACurrentMediaTime();
 
@@ -435,6 +501,7 @@ static void KZTick(void) {
             gWasActive = YES;
             gActiveSince = now;
             gSeen = nil;
+            if (gLeadingPills) [gLeadingPills removeAllObjects];
             PLog(@"[state] 录屏开始（倒计时保护 %.1fs）", gEyeGate);
         }
     } else if (gWasActive && (now - gLastActiveAt) > 3.0) {
@@ -449,6 +516,7 @@ static void KZTick(void) {
                 }
             }
             [gHosts removeAllObjects];
+            if (gLeadingPills) [gLeadingPills removeAllObjects];
             KZOnce(@"clean", @"[inject] 录屏结束，已移除素材");
         }
         PLog(@"[state] captured=0");
@@ -489,7 +557,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.49 (active rescan, idle 1.2s)");
+    PLog(@"ctor v1.50 (one eye per pill, switch works)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
