@@ -427,10 +427,22 @@ static BOOL gPresetEditMode = NO;
 
 - (void)forwardTo:(NSString *)sel {
     SEL s = NSSelectorFromString(sel);
-    UIResponder *r = self.nextResponder;      // 必须跳过自己，否则自己调自己 → 无限递归崩溃
+    // 1) 同一导航栈里的 KZRootListController（responder 链到不了"兄弟" VC）
+    if ([self isKindOfClass:[UIViewController class]]) {
+        UIViewController *vc = (UIViewController *)self;
+        for (UIViewController *c in vc.navigationController.viewControllers) {
+            if ([NSStringFromClass(c.class) isEqualToString:@"KZRootListController"] &&
+                [c respondsToSelector:s]) {
+                ((void (*)(id, SEL))objc_msgSend)(c, s);
+                return;
+            }
+        }
+    }
+    // 2) 兜底：responder 链（必须跳过自己，否则自己调自己 → 无限递归崩溃）
+    UIResponder *r = self.nextResponder;
     NSInteger guard = 0;
     while (r && guard++ < 24) {
-        if ([r respondsToSelector:s]) {
+        if ([r respondsToSelector:s] && r != self) {
             ((void (*)(id, SEL))objc_msgSend)(r, s);
             return;
         }
