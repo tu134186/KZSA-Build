@@ -3,7 +3,6 @@
 #import <QuartzCore/QuartzCore.h>
 #import <substrate.h>
 #import <objc/runtime.h>
-#import <objc/message.h>
 #import <stdarg.h>
 #import "kzeye_b64.h"
 
@@ -24,105 +23,21 @@ static void PLog(NSString *fmt, ...) {
     KZFlush();
 }
 
-static id gManager = nil;
-static id gProvider = nil;
-static __unsafe_unretained id gActivityHost = nil;
-static __unsafe_unretained id gElementHost = nil;
-static BOOL gLaunched = NO;
-static BOOL gRegistered = NO;
-static BOOL gLastCaptured = NO;
-static UIView *gLeadingViewRef = nil;
-static double gLaunchAt = 0;
-static double gCtorAt = 0;
-static void KZRegisterOnce(void);
-static void KZProbeAuthority(id mgr);
-static void KZReportOrder(void);
-static void KZDiag(void);
-static BOOL (*origNeg)(id, SEL, id);
-static BOOL kzNeg(id self, SEL _cmd, id elem);
-static id (*origElemVC)(id, SEL, id);
-static id kzElemVC(id self, SEL _cmd, id elem);
+static NSMutableSet *gSeen = nil;
+static void KZOnce(NSString *key, NSString *msg) {
+    if (!gSeen) gSeen = [NSMutableSet set];
+    if ([gSeen containsObject:key]) return;
+    [gSeen addObject:key];
+    PLog(@"%@", msg);
+}
 
-// 只在 manager 被创建时抓实例，不做任何遍历
-static id (*origInit)(id, SEL, id);
-static id kzInit(id self, SEL _cmd, id authority) {
-    id r = nil;
+static NSString *KZElemId(id elem) {
     @try {
-        r = origInit ? origInit(self, _cmd, authority) : nil;
-    } @catch (...) {
-        PLog(@"[init] 原实现抛出异常，已忽略");
-        r = self;
-    }
-    if (r && !gManager) {
-        gManager = r;
-        PLog(@"[init] 抓到 manager: %@", NSStringFromClass([r class]));
-    }
-    return r;
+        id eid = [elem valueForKey:@"elementIdentifier"];
+        if ([eid isKindOfClass:[NSString class]]) return eid;
+    } @catch (...) {}
+    return nil;
 }
-
-static void (*origWillLayout)(id, SEL);
-static void kzWillLayout(id self, SEL _cmd) {
-    if (!gManager) {
-        gManager = self;
-        PLog(@"[init] 从 hostWillPerformLayout 抓到: %@", NSStringFromClass([self class]));
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZRegisterOnce(); });
-    }
-    @try { if (origWillLayout) origWillLayout(self, _cmd); } @catch (...) {}
-}
-
-static void (*origPromote)(id, SEL);
-static void kzPromote(id self, SEL _cmd) {
-    if (!gManager) {
-        gManager = self;
-        PLog(@"[init] 从 invalidatePromotedElements 抓到: %@", NSStringFromClass([self class]));
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZRegisterOnce(); });
-    }
-    @try { if (origPromote) origPromote(self, _cmd); } @catch (...) {}
-}
-
-
-#pragma mark - element provider
-
-
-#pragma mark - SystemAperture 私有协议（公开 SDK 没有，自己声明）
-
-@protocol SAElementIdentifying <NSObject>
-- (NSString *)clientIdentifier;
-- (NSString *)elementIdentifier;
-@end
-
-@protocol SAElement <SAElementIdentifying>
-- (id)viewProvider;
-@end
-
-@protocol SAElementViewProviding <NSObject>
-- (id)element;
-@end
-
-@protocol SAActivityBehavior <NSObject>
-- (BOOL)hasActivityBehavior;
-@end
-
-@protocol SAUILayoutSpecifying <NSObject>
-- (NSInteger)layoutMode;
-- (NSInteger)maximumSupportedLayoutMode;
-- (NSInteger)minimumSupportedLayoutMode;
-- (NSInteger)preferredLayoutMode;
-- (void)setLayoutMode:(NSInteger)mode reason:(NSInteger)reason;
-@end
-
-@interface KZElementProvider : NSObject <SAElement, SAElementViewProviding, SAActivityBehavior, SAUILayoutSpecifying>
-
-@end
-
-@implementation KZElementProvider {
-    UIView *_kzLeading;
-    UIView *_kzMinimal;
-}
-
-- (NSString *)elementIdentifier { return @"KZSharinganElement"; }
-- (NSString *)identifier { return @"KZSharinganElement"; }
-- (NSString *)description { return @"KZSharinganElement"; }
 
 static UIImage *KZEyeImage(void) {
     static UIImage *img = nil;
@@ -130,454 +45,114 @@ static UIImage *KZEyeImage(void) {
     dispatch_once(&once, ^{
         NSData *d = [[NSData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:kKZeyeB64]
                                                         options:NSDataBase64DecodingIgnoreUnknownCharacters];
-        if (d) img = [UIImage imageWithData:d];
+        if (d.length > 200) img = [UIImage imageWithData:d];
         if (!img) img = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe2.png"];
-        if (!img) img = [UIImage imageWithContentsOfFile:@"/Library/KZTheme/eye/tomoe.png"];
-        PLog(@"[prov] eye image = %@", img ? [NSString stringWithFormat:@"%.0fx%.0f", img.size.width, img.size.height] : @"nil");
+        PLog(@"[img] eye = %@", img ? [NSString stringWithFormat:@"%.0fx%.0f", img.size.width, img.size.height] : @"nil");
     });
     return img;
 }
 
-- (UIView *)kzMakeView {
+static UIView *KZEyeView(void) {
     UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
     v.backgroundColor = [UIColor blackColor];
     v.layer.cornerRadius = 11.0;
     v.layer.masksToBounds = YES;
+    v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+
     UIImage *img = KZEyeImage();
-    if (!img) v.backgroundColor = [UIColor redColor];
-    if (img) {
-        UIImageView *iv = [[UIImageView alloc] initWithImage:img];
-        iv.frame = v.bounds;
-        iv.contentMode = UIViewContentModeScaleAspectFill;
-        [v addSubview:iv];
-        CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
-        spin.fromValue = @(0.0);
-        spin.toValue = @(M_PI * 2.0);
-        spin.duration = 1.5;
-        spin.repeatCount = INFINITY;
-        [iv.layer addAnimation:spin forKey:@"kzspin"];
+    if (!img) {
+        v.backgroundColor = [UIColor redColor];
+        return v;
     }
+    UIImageView *iv = [[UIImageView alloc] initWithImage:img];
+    iv.frame = v.bounds;
+    iv.contentMode = UIViewContentModeScaleAspectFill;
+    iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [v addSubview:iv];
+
+    CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+    spin.fromValue = @(0.0);
+    spin.toValue = @(M_PI * 2.0);
+    spin.duration = 1.5;
+    spin.repeatCount = INFINITY;
+    [iv.layer addAnimation:spin forKey:@"kzspin"];
+
+    CABasicAnimation *breathe = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+    breathe.fromValue = @(1.0);
+    breathe.toValue = @(1.06);
+    breathe.duration = 1.1;
+    breathe.autoreverses = YES;
+    breathe.repeatCount = INFINITY;
+    [v.layer addAnimation:breathe forKey:@"kzbreathe"];
     return v;
 }
 
-// 1.31：视图必须缓存。每次调用都 new 一个的话，岛 morph 时会拿到不同实例，
-// 旧实例残留在动画层上 = 用户看到的“有个东西在飘”。
-- (UIView *)leadingView {
-    PLog(@"[prov] leadingView");
-    if (!_kzLeading) _kzLeading = [self kzMakeView];
-    gLeadingViewRef = _kzLeading;
-    return _kzLeading;
-}
-- (UIView *)trailingView { return nil; }
-- (UIView *)minimalView {
-    PLog(@"[prov] minimalView");
-    if (!_kzMinimal) _kzMinimal = [self kzMakeView];
-    return _kzMinimal;
-}
-- (UIView *)expandedLeadingView {
-    if (!_kzLeading) _kzLeading = [self kzMakeView];
-    return _kzLeading;
-}
-- (UIView *)expandedTrailingView { return nil; }
-
-- (NSInteger)preferredLayoutMode { PLog(@"[prov] preferredLayoutMode"); return 1; }
-- (NSInteger)maximumSupportedLayoutMode { PLog(@"[prov] maxLayoutMode"); return 1; }
-- (NSInteger)minimumSupportedLayoutMode { return 0; }
-- (NSInteger)minimumLayoutMode { return 0; }
-- (NSInteger)layoutMode { return 2; }
-- (void)setLayoutMode:(NSInteger)mode reason:(NSInteger)reason {
-    PLog(@"[prov] setLayoutMode:%ld reason:%ld", (long)mode, (long)reason);
-}
-// 下面是 SAUILayoutSpecifying 里的结构化返回方法：不显式实现的话，
-// forwardInvocation 会用 "@@:" 顶替，返回结构体时长度不匹配会崩（1.27 补）
-- (CGSize)sizeThatFitsSize:(CGSize)size forProvidedView:(UIView *)view inLayoutMode:(NSInteger)mode {
-    if (size.width > 10000.0 || size.height > 10000.0) PLog(@"[prov] sizeThatFits inf mode=%ld", (long)mode);
-    else PLog(@"[prov] sizeThatFits %.0fx%.0f mode=%ld", size.width, size.height, (long)mode);
-    return CGSizeMake(22, 22);
-}
-- (BOOL)isProvidedViewConcentric:(UIView *)view inLayoutMode:(NSInteger)mode { return YES; }
-- (BOOL)isInteractiveDismissalEnabled { return NO; }
-- (BOOL)isMinimalPresentationPossible { return YES; }
-- (BOOL)isRequestingMenuPresentation { return NO; }
-- (NSDirectionalEdgeInsets)preferredEdgeOutsetsForLayoutMode:(NSInteger)mode suggestedOutsets:(NSDirectionalEdgeInsets)suggested maximumOutsets:(NSDirectionalEdgeInsets)maximum {
-    return suggested;
+static BOOL KZIsRecordingElement(id self) {
+    NSString *eid = KZElemId(self);
+    return eid.length > 0 && [eid.lowercaseString containsString:@"screenrecording"];
 }
 
-- (NSString *)clientIdentifier { return @"com.minis.kzsa"; }
+#pragma mark - 给系统录屏 element 提供视图（不再注册第二个 element）
 
-// 1.29：manager 的 _elementViewControllerForElement:creatingIfNecessary: 里，
-// 如果 element 既没有 alert 也没有 activity 行为，会直接返回 nil（这就是 1.27 的 [vc] ... -> nil）
-- (BOOL)hasActivityBehavior { PLog(@"[prov] hasActivityBehavior"); return YES; }
-- (BOOL)hasAlertBehavior { return NO; }
-- (id)activityHost { return gActivityHost; }
-- (id)elementHost { return gElementHost; }
-- (void)setElementHost:(id)host { gElementHost = host; PLog(@"[prov] setElementHost %@", host ? NSStringFromClass([host class]) : @"nil"); }
-- (void)setActivityHost:(id)host { gActivityHost = host; PLog(@"[prov] setActivityHost %@", host ? NSStringFromClass([host class]) : @"nil"); }
-
-// SAElement 要求 viewProvider；SAElementViewProviding 要求 element —— 两个都必须返回 self，
-// 否则 manager 拿到 nil 会直接跳过这个 element（1.27 补上）
-- (id)viewProvider { PLog(@"[prov] viewProvider"); return self; }
-- (id)element { PLog(@"[prov] element"); return self; }
-- (BOOL)_canShowWhileLocked { return YES; }
-
-- (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
-    return [NSMethodSignature signatureWithObjCTypes:"@@:"];
-}
-- (void)forwardInvocation:(NSInvocation *)inv {
-    NSUInteger len = [[inv methodSignature] methodReturnLength];
-    if (len > 0) { void *buf = calloc(1, len); [inv setReturnValue:buf]; free(buf); }
-}
-@end
-
-static id gAssertion = nil;
-static __unsafe_unretained id gAuthority = nil;
-static id (*origElemVCC)(id, SEL, id, BOOL);
-static int gVCNilCount = 0;
-static BOOL gVCGaveUp = NO;
-static NSArray *(*origProbeOrder)(id, SEL, NSArray *, NSArray *);
-
-static NSString *KZElemID(id elem) {
+static UIView *(*origLead)(id, SEL);
+static UIView *kzLead(id self, SEL _cmd) {
+    UIView *o = origLead ? origLead(self, _cmd) : nil;
     @try {
-        SEL es = NSSelectorFromString(@"elementIdentifier");
-        if (elem && [elem respondsToSelector:es]) {
-            id v = ((id (*)(id, SEL))objc_msgSend)(elem, es);
-            if ([v isKindOfClass:[NSString class]]) return v;
+        if (KZIsRecordingElement(self)) {
+            KZOnce(@"lead", @"[lead] 提供写轮眼 via leadingView");
+            return KZEyeView();
         }
-    } @catch (NSException *e) {}
-    return @"?";
+    } @catch (...) {}
+    return o;
 }
 
-// 1.27：authority 是 <SAElementConsidering>，它的 order 方法决定谁能进入 promoted 列表
-static NSArray *kzOrder(id self, SEL _cmd, NSArray *temporal, NSArray *prev) {
-    NSArray *r = temporal;
-    @try { if (origProbeOrder) r = origProbeOrder(self, _cmd, temporal, prev); } @catch (...) {}
-    BOOL inT = (gProvider && [temporal containsObject:gProvider]);
-    BOOL inR = (gProvider && [r containsObject:gProvider]);
-    PLog(@"[au] order temporal=%lu contains=%d out=%lu contains=%d",
-         (unsigned long)temporal.count, inT, (unsigned long)r.count, inR);
-    if (gProvider && !inR) {
-        @try {
-            r = [(r ?: @[]) arrayByAddingObject:gProvider];
-            PLog(@"[au] 追加 KZElement -> %lu", (unsigned long)r.count);
-        } @catch (NSException *e) { PLog(@"[au] 追加异常 %@", e.reason); }
-    }
-    return r;
-}
-
-static id kzElemVCC(id self, SEL _cmd, id elem, BOOL create) {
-    id r = nil;
-    @try { r = origElemVCC ? origElemVCC(self, _cmd, elem, create) : nil; } @catch (...) {}
-    PLog(@"[vc] _elemVC(%@) create=%d -> %@", KZElemID(elem), create, r ? NSStringFromClass([r class]) : @"nil");
-
-    // 安全网：我们的 element 如果一直造不出 VC，会让系统录屏 element 也被卡住不显示。
-    // 连续 8 次仍为 nil 就释放 assertion，把系统恢复原状（下个版本再修）。
-    if (create && !r && elem == gProvider) {
-        gVCNilCount++;
-        PLog(@"[vc] KZ 的 VC 仍为 nil（第 %d 次）", gVCNilCount);
-        if (gVCNilCount >= 8 && !gVCGaveUp) {
-            gVCGaveUp = YES;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                @try {
-                    SEL inv = NSSelectorFromString(@"invalidate");
-                    if (gAssertion && [gAssertion respondsToSelector:inv]) {
-                        ((void (*)(id, SEL))objc_msgSend)(gAssertion, inv);
-                        PLog(@"[vc] 已放弃并 invalidate assertion，恢复系统录屏");
-                    }
-                } @catch (NSException *e) { PLog(@"[vc] invalidate 异常 %@", e.reason); }
-            });
-        }
-    }
-    return r;
-}
-
-static void KZProbeAuthority(id mgr) {
-    static BOOL done = NO;
-    if (done) return;
-    done = YES;
+static UIView *(*origExpLead)(id, SEL);
+static UIView *kzExpLead(id self, SEL _cmd) {
+    UIView *o = origExpLead ? origExpLead(self, _cmd) : nil;
     @try {
-        unsigned int ic = 0;
-        Ivar *ivs = class_copyIvarList([mgr class], &ic);
-        NSMutableString *s = [NSMutableString string];
-        for (unsigned i = 0; i < ic && i < 24; i++) {
-            const char *n = ivar_getName(ivs[i]);
-            [s appendFormat:@"%s ", n ? n : "?"];
+        if (KZIsRecordingElement(self)) {
+            KZOnce(@"explead", @"[lead] 提供写轮眼 via expandedLeadingView");
+            return KZEyeView();
         }
-        if (ivs) free(ivs);
-        PLog(@"[au] manager(%s) ivars: %@", class_getName([mgr class]), s);
-
-        Ivar iv = class_getInstanceVariable([mgr class], "_elementAuthority");
-        id au = iv ? object_getIvar(mgr, iv) : nil;
-        PLog(@"[au] _elementAuthority = %@", au ? NSStringFromClass([au class]) : @"nil");
-        if (!au) {
-            iv = class_getInstanceVariable([mgr class], "_delegate");
-            au = iv ? object_getIvar(mgr, iv) : nil;
-            PLog(@"[au] _delegate = %@", au ? NSStringFromClass([au class]) : @"nil");
-        }
-        if (!au) return;
-        gAuthority = au;
-
-        unsigned int mc = 0;
-        Method *ms = class_copyMethodList([au class], &mc);
-        NSMutableString *m = [NSMutableString string];
-        for (unsigned i = 0; i < mc && i < 20; i++) [m appendFormat:@"%@ ", NSStringFromSelector(method_getName(ms[i]))];
-        if (ms) free(ms);
-        PLog(@"[au] methods(%u): %@", mc, m);
-
-        SEL os = NSSelectorFromString(@"elementsOrderedByPromotionFromTemporallyOrderedElements:withPreviousOrdering:");
-        if (class_getInstanceMethod([au class], os)) {
-            MSHookMessageEx([au class], os, (IMP)kzOrder, (IMP *)&origProbeOrder);
-            PLog(@"[au] hook order 成功");
-        } else {
-            PLog(@"[au] order 方法不存在");
-        }
-
-        SEL vcs = NSSelectorFromString(@"_elementViewControllerForElement:creatingIfNecessary:");
-        if (class_getInstanceMethod([mgr class], vcs)) {
-            MSHookMessageEx([mgr class], vcs, (IMP)kzElemVCC, (IMP *)&origElemVCC);
-            PLog(@"[vc] hook _elementVC 成功");
-        } else {
-            PLog(@"[vc] _elementVC 不存在");
-        }
-    } @catch (NSException *e) { PLog(@"[au] 异常 %@", e.reason); }
+    } @catch (...) {}
+    return o;
 }
 
-static BOOL KZIsCaptured(void) {
-    BOOL cap = NO;
+static UIView *(*origMinimal)(id, SEL);
+static UIView *kzMinimal(id self, SEL _cmd) {
+    UIView *o = origMinimal ? origMinimal(self, _cmd) : nil;
     @try {
-        for (UIScreen *sc in [UIScreen screens]) {
-            if (sc.isCaptured) { cap = YES; break; }
+        if (KZIsRecordingElement(self)) {
+            KZOnce(@"minimal", @"[lead] 提供写轮眼 via minimalView");
+            return KZEyeView();
         }
-    } @catch (NSException *e) {}
-    return cap;
-}
-
-static void KZUnregister(void) {
-    if (!gRegistered) return;
-    gRegistered = NO;
-    @try {
-        SEL inv = NSSelectorFromString(@"invalidate");
-        if (gAssertion && [gAssertion respondsToSelector:inv]) {
-            ((void (*)(id, SEL))objc_msgSend)(gAssertion, inv);
-            PLog(@"[reg] 录屏结束 -> invalidate assertion");
-        }
-    } @catch (NSException *e) { PLog(@"[reg] invalidate 异常 %@", e.reason); }
-    gAssertion = nil;
-    gProvider = nil;
-    gVCNilCount = 0;
-    gVCGaveUp = NO;
-}
-
-static void KZRegisterOnce(void) {
-    if (gRegistered || !gManager) return;
-    // 1.28：必须等 SpringBoard 启动完成后再注册，否则会在启动过程中创建 element/VC 把 SpringBoard 搞崩
-    if (!gLaunched) return;
-    if (gLaunchAt > 0 && CACurrentMediaTime() - gLaunchAt < 2.0) return;
-    // 1.31：只在系统录屏时注册，平时完全不影响灵动岛
-    if (!KZIsCaptured()) return;
-    @try {
-        gProvider = [[KZElementProvider alloc] init];
-        KZProbeAuthority(gManager);
-        SEL reg = NSSelectorFromString(@"registerElement:");
-        ((void (*)(id, SEL, id))objc_msgSend)(gManager, reg, gProvider);
-        PLog(@"[reg] registerElement 完成");
-        SEL as = NSSelectorFromString(@"_assertionForElementCreatingIfNecessary:");
-        id a = ((id (*)(id, SEL, id))objc_msgSend)(gManager, as, gProvider);
-        gAssertion = a;
-        gRegistered = (a != nil);
-        PLog(@"[reg] assertion = %@", a ? NSStringFromClass([a class]) : @"nil");
-        SEL rg = NSSelectorFromString(@"registeredElements");
-        if ([gManager respondsToSelector:rg]) {
-            NSArray *regs = ((id (*)(id, SEL))objc_msgSend)(gManager, rg);
-            PLog(@"[reg] registeredElements=%lu contains=%d authority=%d", (unsigned long)regs.count, [regs containsObject:gProvider], gAuthority != nil);
-        }
-            SEL setL = NSSelectorFromString(@"setLayoutMode:reason:forTargetWithOverrider:");
-            if ([gManager respondsToSelector:setL]) {
-                @try {
-                    ((void(*)(id,SEL,long,long,id))objc_msgSend)(gManager, setL, 2, 0, gProvider);
-                    PLog(@"[reg] setLayoutMode:2 已调用");
-                } @catch (NSException *e) { PLog(@"[reg] setLayoutMode 异常: %@", e.reason); }
-            } else {
-                PLog(@"[reg] setLayoutMode 不存在");
-            }
-            SEL inval = NSSelectorFromString(@"invalidatePromotedElements");
-            if ([gManager respondsToSelector:inval]) {
-                @try { ((void(*)(id,SEL))objc_msgSend)(gManager, inval); PLog(@"[reg] invalidate 已调用"); }
-                @catch (NSException *e) { PLog(@"[reg] invalidate 异常"); }
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZReportOrder(); });
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZReportOrder(); });
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZDiag(); });
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZDiag(); });
-            }
-    } @catch (NSException *e) {
-        PLog(@"[reg] 异常: %@", e.reason);
-    }
+    } @catch (...) {}
+    return o;
 }
 
 static BOOL gHooked = NO;
-static BOOL gHooked2 = NO;
-static void KZTryHook(void) {
+static void KZInstall(void) {
     if (gHooked) return;
-    Class c = NSClassFromString(@"SAUISystemApertureManager");
-    if (!c) return;
-    SEL sel = NSSelectorFromString(@"initWithElementAuthority:");
-    if (![c instancesRespondToSelector:sel]) {
-        PLog(@"[hook] 没有 initWithElementAuthority:");
+    Class c = NSClassFromString(@"SBSystemApertureSceneElement");
+    if (!c) { KZOnce(@"noclass", @"[hook] 找不到 SBSystemApertureSceneElement"); return; }
+    int n = 0;
+    SEL s1 = NSSelectorFromString(@"leadingView");
+    SEL s2 = NSSelectorFromString(@"expandedLeadingView");
+    SEL s3 = NSSelectorFromString(@"minimalView");
+    if ([c instancesRespondToSelector:s1]) { MSHookMessageEx(c, s1, (IMP)kzLead, (IMP *)&origLead); n++; }
+    if ([c instancesRespondToSelector:s2]) { MSHookMessageEx(c, s2, (IMP)kzExpLead, (IMP *)&origExpLead); n++; }
+    if ([c instancesRespondToSelector:s3]) { MSHookMessageEx(c, s3, (IMP)kzMinimal, (IMP *)&origMinimal); n++; }
+    if (n > 0) {
         gHooked = YES;
-        return;
-    }
-    MSHookMessageEx(c, sel, (IMP)kzInit, (IMP *)&origInit);
-    gHooked = YES;
-    PLog(@"[hook] 已 hook initWithElementAuthority:");
-    if (!gHooked2) {
-        SEL s1 = NSSelectorFromString(@"hostWillPerformLayout");
-        SEL s2 = NSSelectorFromString(@"invalidatePromotedElements");
-        BOOL ok1 = [c instancesRespondToSelector:s1];
-        BOOL ok2 = [c instancesRespondToSelector:s2];
-        if (ok1) MSHookMessageEx(c, s1, (IMP)kzWillLayout, (IMP *)&origWillLayout);
-        if (ok2) MSHookMessageEx(c, s2, (IMP)kzPromote, (IMP *)&origPromote);
-        gHooked2 = YES;
-        PLog(@"[hook] hostWillPerformLayout:%d invalidatePromotedElements:%d", ok1, ok2);
-
-        SEL nSel = NSSelectorFromString(@"elementRequestsNegativeResponse:");
-        if (class_getInstanceMethod(c, nSel)) {
-            MSHookMessageEx(c, nSel, (IMP)kzNeg, (IMP *)&origNeg);
-            PLog(@"[auth] hook negativeResponse");
-        } else PLog(@"[auth] negativeResponse 不存在");
-
-        SEL vSel = NSSelectorFromString(@"elementViewControllerForElement:");
-        if (class_getInstanceMethod(c, vSel)) {
-            MSHookMessageEx(c, vSel, (IMP)kzElemVC, (IMP *)&origElemVC);
-            PLog(@"[auth] hook elementViewControllerForElement");
-        } else PLog(@"[auth] elementViewControllerForElement 不存在");
+        PLog(@"[hook] 已 hook %d 个视图方法", n);
     }
 }
-
-static void KZDiag(void) {
-    if (!gManager || !gProvider) { PLog(@"[diag] manager/provider 为空"); return; }
-    @try {
-        SEL s = NSSelectorFromString(@"elementViewControllerForElement:");
-        id vc = ((id (*)(id, SEL, id))objc_msgSend)(gManager, s, gProvider);
-        long lm = -1;
-        if (vc) {
-            SEL ls = NSSelectorFromString(@"layoutMode");
-            if ([vc respondsToSelector:ls]) lm = (long)((NSInteger (*)(id, SEL))objc_msgSend)(vc, ls);
-        }
-        PLog(@"[diag] vc=%@ layout=%ld", vc ? NSStringFromClass([vc class]) : @"nil", lm);
-        UIView *v = gLeadingViewRef;
-        if (v) {
-            CGRect f = [v convertRect:v.bounds toView:nil];
-            PLog(@"[diag] view super=%@ win=%d frame=%.0f,%.0f %.0fx%.0f hidden=%d alpha=%.2f",
-                 v.superview ? NSStringFromClass([v.superview class]) : @"nil",
-                 v.window != nil, f.origin.x, f.origin.y, f.size.width, f.size.height, v.hidden, v.alpha);
-        } else {
-            PLog(@"[diag] leadingView 还没被创建");
-        }
-        SEL ms = NSSelectorFromString(@"_maximumNumberOfSimultaneouslyVisibleElements");
-        if ([gManager respondsToSelector:ms]) {
-            NSUInteger n = ((NSUInteger (*)(id, SEL))objc_msgSend)(gManager, ms);
-            PLog(@"[diag] maxVisible=%lu", (unsigned long)n);
-        }
-    } @catch (NSException *e) { PLog(@"[diag] 异常 %@", e.reason); }
-}
-
-static void KZReportOrder(void) {
-    if (!gManager) return;
-    @try {
-        SEL s = NSSelectorFromString(@"orderedElementViewControllers");
-        if (![gManager respondsToSelector:s]) { PLog(@"[reg] orderedVC 方法不存在"); return; }
-        NSArray *vcs = ((id (*)(id, SEL))objc_msgSend)(gManager, s);
-        NSMutableString *m = [NSMutableString string];
-        for (id vc in vcs) {
-            @try {
-                SEL evp = NSSelectorFromString(@"elementViewProvider");
-                id vp = [vc respondsToSelector:evp] ? ((id (*)(id, SEL))objc_msgSend)(vc, evp) : nil;
-                SEL es = NSSelectorFromString(@"element");
-                id el = (vp && [vp respondsToSelector:es]) ? ((id (*)(id, SEL))objc_msgSend)(vp, es) : nil;
-                [m appendFormat:@"%@ ", KZElemID(el)];
-            } @catch (NSException *e) { [m appendString:@"? "]; }
-        }
-        PLog(@"[reg] orderedVC=%lu ids=%@", (unsigned long)vcs.count, m);
-    } @catch (NSException *e) { PLog(@"[reg] orderedVC 异常 %@", e.reason); }
-}
-
-// 定期把能力检查写一次（只读，不调用）
-static void KZReport(void) {
-    if (!gManager) return;
-    static BOOL done = NO;
-    if (done) return;
-    done = YES;
-    NSArray *sels = @[ @"registerElement:", @"_assertionForElementCreatingIfNecessary:",
-                       @"elementAssertionForElement:", @"registeredElements", @"orderedElementViewControllers" ];
-    NSMutableString *line = [NSMutableString string];
-    for (NSString *s in sels) {
-        BOOL ok = [gManager respondsToSelector:NSSelectorFromString(s)];
-        [line appendFormat:@"%@:%@ ", s, ok ? @"YES" : @"NO"];
-    }
-    PLog(@"[cap] %@", line);
-}
-
-%hook SpringBoard
-
-- (BOOL)application:(id)application didFinishLaunchingWithOptions:(id)options {
-    BOOL r = %orig;
-    gLaunched = YES;
-    gLaunchAt = CACurrentMediaTime();
-    PLog(@"[boot] SpringBoard didFinishLaunching");
-    return r;
-}
-
-%end
 
 %ctor {
-    gCtorAt = CACurrentMediaTime();
-    PLog(@"ctor v1.33 (compact only)");
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    PLog(@"ctor v1.34 (provide views, no element)");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
-            @try {
-                // 兜底：万一 didFinishLaunching 的 hook 没触发，10s 后也认为启动完成
-                if (!gLaunched && gCtorAt > 0 && CACurrentMediaTime() - gCtorAt > 10.0) {
-                    gLaunched = YES;
-                    gLaunchAt = CACurrentMediaTime();
-                    PLog(@"[boot] fallback 启动判定（didFinishLaunching 未触发）");
-                }
-                KZTryHook();
-                BOOL cap = KZIsCaptured();
-                if (cap != gLastCaptured) {
-                    gLastCaptured = cap;
-                    PLog(@"[state] captured=%d", cap);
-                }
-                if (cap) KZRegisterOnce(); else KZUnregister();
-                KZReport();
-            } @catch (...) {
-                PLog(@"[tick] 异常已忽略");
-            }
+            @try { KZInstall(); } @catch (...) {}
         }];
     });
-}
-
-
-static BOOL kzNeg(id self, SEL _cmd, id elem) {
-    BOOL r = origNeg ? origNeg(self, _cmd, elem) : NO;
-    NSString *eid = @"?";
-    @try {
-        SEL es = NSSelectorFromString(@"elementIdentifier");
-        if (elem && [elem respondsToSelector:es]) {
-            eid = ((id (*)(id, SEL))objc_msgSend)(elem, es);
-        }
-    } @catch (NSException *e) {}
-    PLog(@"[auth] negativeResponse(%@)=%d", eid, r);
-    return r;
-}
-
-static id kzElemVC(id self, SEL _cmd, id elem) {
-    id r = origElemVC ? origElemVC(self, _cmd, elem) : nil;
-    NSString *eid = @"?";
-    @try {
-        SEL es = NSSelectorFromString(@"elementIdentifier");
-        if (elem && [elem respondsToSelector:es]) {
-            eid = ((id (*)(id, SEL))objc_msgSend)(elem, es);
-        }
-    } @catch (NSException *e) {}
-    PLog(@"[auth] elementVC(%@) -> %@", eid, r ? NSStringFromClass([r class]) : @"nil");
-    return r;
 }
