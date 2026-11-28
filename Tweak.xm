@@ -84,12 +84,14 @@ static UIImage *KZEyeImage(void) {
 #pragma mark - 写轮眼视图（固定尺寸，不随容器拉伸，不吃点击）
 
 @interface KZEyeCircleView : UIView
+@property (nonatomic) CGFloat kzSide;
+@property (nonatomic) CGFloat kzOffX;
 @end
 @implementation KZEyeCircleView
 - (void)setFrame:(CGRect)frame {
-    CGFloat side = 22.0;
+    CGFloat side = self.kzSide > 0 ? self.kzSide : 22.0;
     CGRect f = frame;
-    f.origin.x += (frame.size.width - side) / 2.0;
+    f.origin.x += (frame.size.width - side) / 2.0 + self.kzOffX;
     f.origin.y += (frame.size.height - side) / 2.0;
     f.size = CGSizeMake(side, side);
     [super setFrame:f];
@@ -101,10 +103,17 @@ static UIImage *KZEyeImage(void) {
 @end
 
 static UIView *KZMakeEye(void) {
-    UIView *v = [[KZEyeCircleView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
+    double sc = KZPrefNum(@"scale", 1.0);
+    if (sc < 0.3 || sc > 2.5) sc = 1.0;
+    CGFloat side = 22.0 * sc;
+    CGFloat offx = KZPrefNum(@"offX", 0.0);
+    KZEyeCircleView *v = [[KZEyeCircleView alloc] initWithFrame:CGRectMake(0, 0, side, side)];
+    v.kzSide = side;
+    v.kzOffX = offx;
+    PLog(@"[eye] side=%.1f offX=%.1f", side, offx);
     v.tag = KZ_EYE_TAG;
     v.backgroundColor = [UIColor blackColor];
-    v.layer.cornerRadius = 11.0;
+    v.layer.cornerRadius = side / 2.0;
     v.layer.masksToBounds = YES;
     v.userInteractionEnabled = NO;
     v.autoresizingMask = UIViewAutoresizingNone;
@@ -318,7 +327,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.38 (o2pro: replace provider)");
+    PLog(@"ctor v1.39 (o2pro + prefs)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
