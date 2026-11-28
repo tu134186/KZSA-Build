@@ -5,6 +5,7 @@
 #import <Preferences/PSTableCell.h>
 #import <notify.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import "kzpresets_b64.h"
 #include <spawn.h>
 extern char **environ;
 
@@ -147,6 +148,129 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
 
 @end
 
+
+#pragma mark - 一行：素材缩略图（点一下立即替换）
+
+static UIImage *KZPBase64(const char *b64) {
+    if (!b64) return nil;
+    NSData *d = [[NSData alloc] initWithBase64EncodedString:[NSString stringWithUTF8String:b64]
+                                                    options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    return d.length > 200 ? [UIImage imageWithData:d] : nil;
+}
+
+static NSArray<UIImage *> *KZPresetImages(void) {
+    static NSArray *imgs = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSMutableArray *a = [NSMutableArray array];
+        for (int i = 0; i < kKZPresetCount; i++) {
+            UIImage *u = KZPBase64(kKZPresetB64[i]);
+            [a addObject:u ?: [UIImage new]];
+        }
+        NSString *b64 = KZPrefStr(@"eyeImage");
+        UIImage *custom = nil;
+        if (b64.length > 200) {
+            NSData *d = [[NSData alloc] initWithBase64EncodedString:b64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
+            if (d.length > 200) custom = [UIImage imageWithData:d];
+        }
+        [a addObject:custom ?: [UIImage new]];
+        imgs = a;
+    });
+    return imgs;
+}
+
+static NSArray<NSString *> *KZPresetNames(void) {
+    NSMutableArray *a = [NSMutableArray array];
+    for (int i = 0; i < kKZPresetCount; i++) [a addObject:[NSString stringWithUTF8String:kKZPresetNames[i]]];
+    [a addObject:@"自定义"];
+    return a;
+}
+
+@interface KZPresetCell : PSTableCell
+@end
+
+@implementation KZPresetCell {
+    UIScrollView *_scroll;
+    NSMutableArray<UIButton *> *_btns;
+}
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style
+              reuseIdentifier:(NSString *)reuseIdentifier
+                    specifier:(PSSpecifier *)specifier {
+    self = [super initWithStyle:style reuseIdentifier:reuseIdentifier specifier:specifier];
+    if (self) {
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+        _scroll = [[UIScrollView alloc] init];
+        _scroll.showsHorizontalScrollIndicator = NO;
+        _scroll.alwaysBounceHorizontal = YES;
+        [self.contentView addSubview:_scroll];
+        _btns = [NSMutableArray array];
+
+        NSArray<UIImage *> *imgs = KZPresetImages();
+        NSArray<NSString *> *names = KZPresetNames();
+        for (NSInteger i = 0; i < imgs.count; i++) {
+            UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
+            b.tag = i;
+            b.layer.cornerRadius = 19;
+            b.layer.masksToBounds = YES;
+            b.backgroundColor = [UIColor blackColor];
+            b.imageView.contentMode = UIViewContentModeScaleAspectFill;
+            [b setImage:imgs[i] forState:UIControlStateNormal];
+            [b addTarget:self action:@selector(pick:) forControlEvents:UIControlEventTouchUpInside];
+            UILabel *lb = [[UILabel alloc] init];
+            lb.text = names[i];
+            lb.font = [UIFont systemFontOfSize:9];
+            lb.textColor = [UIColor secondaryLabelColor];
+            lb.textAlignment = NSTextAlignmentCenter;
+            lb.tag = 100;
+            [b addSubview:lb];
+            [_scroll addSubview:b];
+            [_btns addObject:b];
+        }
+        [self refreshCellContentsWithSpecifier:specifier];
+    }
+    return self;
+}
+
+- (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier {
+    [super refreshCellContentsWithSpecifier:specifier];
+    if (!_btns.count) return;
+    NSInteger cur = (NSInteger)round([KZPrefStr(@"eyePreset") doubleValue]);
+    for (UIButton *b in _btns) {
+        BOOL sel = (b.tag == cur);
+        b.layer.borderWidth = sel ? 2.5 : 0.0;
+        b.layer.borderColor = sel ? [UIColor systemBlueColor].CGColor : [UIColor clearColor].CGColor;
+        b.alpha = sel ? 1.0 : 0.75;
+    }
+}
+
+- (void)pick:(UIButton *)b {
+    KZPrefSet(@"eyePreset", @(b.tag));
+    KZPost();
+    [self refreshCellContentsWithSpecifier:self.specifier];
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"KZPresetChanged" object:nil];
+}
+
+- (void)setHighlighted:(BOOL)h animated:(BOOL)a { [super setHighlighted:NO animated:NO]; }
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    self.textLabel.hidden = YES;
+    self.detailTextLabel.hidden = YES;
+    CGRect b = self.contentView.bounds;
+    _scroll.frame = CGRectMake(8, 4, b.size.width - 16, b.size.height - 8);
+    CGFloat x = 4, side = 38, gap = 10;
+    for (UIButton *btn in _btns) {
+        btn.frame = CGRectMake(x, 2, side, side);
+        UILabel *lb = [btn viewWithTag:100];
+        lb.frame = CGRectMake(-8, side + 1, side + 16, 13);
+        x += side + gap;
+    }
+    _scroll.contentSize = CGSizeMake(x, _scroll.bounds.size.height);
+}
+
+@end
+
 #pragma mark - 控制器
 
 @interface KZRootListController : PSListController <UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate>
@@ -164,6 +288,13 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
                 [s setProperty:stepper forKey:@"cellClass"];
                 if ([s respondsToSelector:@selector(setCellClass:)]) [s setCellClass:stepper];
             }
+            if ([s propertyForKey:@"presetPicker"]) {
+                Class pc = NSClassFromString(@"KZPresetCell");
+                if (pc) {
+                    [s setProperty:pc forKey:@"cellClass"];
+                    if ([s respondsToSelector:@selector(setCellClass:)]) [s setCellClass:pc];
+                }
+            }
         }
         [self decorate];
     }
@@ -171,8 +302,11 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
 }
 
 - (void)decorate {
-    NSString *img = KZPrefStr(@"eyeImage");
-    NSString *txt = (img.length > 200) ? @"自定义图片" : @"内置写轮眼";
+    NSInteger p = (NSInteger)round([KZPrefStr(@"eyePreset") doubleValue]);
+    NSArray<NSString *> *names = KZPresetNames();
+    if (p < 0 || p >= (NSInteger)names.count) p = 0;
+    NSString *txt = names[p];
+    if (p == kKZPresetCount && KZPrefStr(@"eyeImage").length < 200) txt = @"自定义（未导入，用第 1 套）";
     for (PSSpecifier *s in self.specifiers) {
         if ([[s propertyForKey:@"key"] isEqualToString:@"eyeName"]) {
             [s setName:[NSString stringWithFormat:@"当前：%@", txt]];
@@ -273,8 +407,8 @@ static void KZPost(void) { notify_post(KZ_NOTIFY); }
     KZPrefClear(@"offX");
     KZPrefClear(@"offXR");
     KZPrefClear(@"duration");
-    KZPrefClear(@"leftOn");
-    KZPrefClear(@"rightOn");
+    KZPrefClear(@"eyePreset");
+    KZPrefClear(@"offY");
     KZPrefClear(@"enabled");
     KZPost();
     [self decorate];
