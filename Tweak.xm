@@ -241,8 +241,10 @@ static BOOL kzNeg(id self, SEL _cmd, id elem) {
     BOOL r = origNeg ? origNeg(self, _cmd, elem) : NO;
     NSString *eid = @"?";
     @try {
-        if (elem && [elem respondsToSelector:NSSelectorFromString(@"elementIdentifier")])
-            eid = [elem performSelector:NSSelectorFromString(@"elementIdentifier")];
+        SEL es = NSSelectorFromString(@"elementIdentifier");
+        if (elem && [elem respondsToSelector:es]) {
+            eid = ((id (*)(id, SEL))objc_msgSend)(elem, es);
+        }
     } @catch (NSException *e) {}
     PLog(@"[auth] negativeResponse(%@)=%d", eid, r);
     return r;
@@ -252,8 +254,10 @@ static id kzElemVC(id self, SEL _cmd, id elem) {
     id r = origElemVC ? origElemVC(self, _cmd, elem) : nil;
     NSString *eid = @"?";
     @try {
-        if (elem && [elem respondsToSelector:NSSelectorFromString(@"elementIdentifier")])
-            eid = [elem performSelector:NSSelectorFromString(@"elementIdentifier")];
+        SEL es = NSSelectorFromString(@"elementIdentifier");
+        if (elem && [elem respondsToSelector:es]) {
+            eid = ((id (*)(id, SEL))objc_msgSend)(elem, es);
+        }
     } @catch (NSException *e) {}
     PLog(@"[auth] elementVC(%@) -> %@", eid, r ? NSStringFromClass([r class]) : @"nil");
     return r;
