@@ -33,7 +33,7 @@ static void KZOnce(NSString *key, NSString *msg) {
     if (!gSeen) gSeen = [NSMutableSet set];
     if ([gSeen containsObject:key]) return;
     [gSeen addObject:key];
-    PLog(@"%@", msg);
+    if (msg.length) PLog(@"%@", msg);
 }
 
 #pragma mark - 偏好
@@ -57,8 +57,6 @@ static NSString *KZPrefStr(NSString *key) {
     return [v isKindOfClass:[NSString class]] ? v : nil;
 }
 
-#pragma mark - 素材
-
 static UIImage *KZEyeImage(void) {
     NSString *b64 = KZPrefStr(@"eyeImage");
     if (b64.length > 200) {
@@ -81,87 +79,131 @@ static UIImage *KZEyeImage(void) {
     return img;
 }
 
-#pragma mark - 写轮眼视图
+#pragma mark - 写轮眼视图（容器 + 内部小圆，偏移只动小圆，不动容器）
 
-// 固定尺寸（可被设置改变），始终居中，不吃点击
-@interface KZEyeCircleView : UIView
-@property (nonatomic) CGFloat kzSide;
-@property (nonatomic) CGFloat kzOffX;
-@end
-@implementation KZEyeCircleView
-- (void)setFrame:(CGRect)frame {
-    CGFloat side = self.kzSide > 0 ? self.kzSide : 22.0;
-    CGRect f = frame;
-    f.origin.x += (frame.size.width - side) / 2.0 + self.kzOffX;
-    f.origin.y += (frame.size.height - side) / 2.0;
-    f.size = CGSizeMake(side, side);
-    [super setFrame:f];
-}
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    for (UIView *s in self.subviews) s.frame = self.bounds;
-}
+// 容器铺满系统给的槽位，内部 dot 固定尺寸并可按 offX 左右移动；
+// 这样系统的居中布局不会把我们的偏移吃掉，也不会被裁剪。
+@interface KZEyeContainerView : UIView
+@property (nonatomic, strong) UIView *dot;
+@property (nonatomic, strong) UIImageView *imgView;
+@property (nonatomic) CGFloat side;
+@property (nonatomic) CGFloat offX;
+@property (nonatomic) double duration;
+@property (nonatomic) BOOL leftSide;
 @end
 
-static UIView *KZMakeEye(void) {
-    double sc = KZPrefNum(@"scale", 1.0);
+@implementation KZEyeContainerView
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.tag = KZ_EYE_TAG;
+        self.backgroundColor = [UIColor clearColor];
+        self.userInteractionEnabled = NO;
+        self.clipsToBounds = NO;
+        self.autoresizingMask = UIViewAutoresizingNone;
+
+        _dot = [[UIView alloc] initWithFrame:CGRectZero];
+        _dot.userInteractionEnabled = NO;
+        _dot.clipsToBounds = YES;
+        _dot.backgroundColor = [UIColor blackColor];
+        [self addSubview:_dot];
+
+        _imgView = [[UIImageView alloc] initWithFrame:CGRectZero];
+        _imgView.contentMode = UIViewContentModeScaleAspectFill;
+        _imgView.userInteractionEnabled = NO;
+        [_dot addSubview:_imgView];
+        [self kzReload];
+    }
+    return self;
+}
+
+- (void)kzReload {
+    double sc = KZPrefNum(self.leftSide ? @"scale" : @"scaleR", self.leftSide ? 1.0 : 0.95);
     if (sc < 0.3 || sc > 2.5) sc = 1.0;
-    CGFloat side = 22.0 * sc;
-    CGFloat offx = KZPrefNum(@"offX", 0.0);
     double dur = KZPrefNum(@"duration", 1.5);
     if (dur < 0.2) dur = 1.5;
+    CGFloat off = KZPrefNum(self.leftSide ? @"offX" : @"offXR", 0.0);
 
-    KZEyeCircleView *v = [[KZEyeCircleView alloc] initWithFrame:CGRectMake(0, 0, side, side)];
-    v.kzSide = side;
-    v.kzOffX = offx;
-    v.tag = KZ_EYE_TAG;
-    v.backgroundColor = [UIColor blackColor];
-    v.layer.cornerRadius = side / 2.0;
-    v.layer.masksToBounds = YES;
-    v.userInteractionEnabled = NO;
-    v.autoresizingMask = UIViewAutoresizingNone;
-    PLog(@"[eye] side=%.1f offX=%.1f dur=%.2f", side, offx, dur);
+    self.side = 22.0 * sc;
+    self.offX = off;
+    self.duration = dur;
 
     UIImage *img = KZEyeImage();
-    if (!img) {
-        v.backgroundColor = [UIColor redColor];
-        return v;
-    }
-    UIImageView *iv = [[UIImageView alloc] initWithImage:img];
-    iv.frame = v.bounds;
-    iv.contentMode = UIViewContentModeScaleAspectFill;
-    iv.userInteractionEnabled = NO;
-    iv.autoresizingMask = UIViewAutoresizingNone;
-    [v addSubview:iv];
+    self.dot.backgroundColor = img ? [UIColor blackColor] : [UIColor redColor];
+    self.imgView.image = img;
+    self.dot.layer.cornerRadius = self.side / 2.0;
+    self.imgView.frame = self.dot.bounds;
+    PLog(@"[eye] side=%.1f offX=%.1f dur=%.2f", self.side, off, dur);
+    [self setNeedsLayout];
+    [self kzAnim];
+}
 
+- (void)kzAnim {
+    [self.imgView.layer removeAnimationForKey:@"kzspin"];
     CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
     spin.fromValue = @(0.0);
     spin.toValue = @(M_PI * 2.0);
-    spin.duration = dur;
+    spin.duration = self.duration;
     spin.repeatCount = INFINITY;
-    [iv.layer addAnimation:spin forKey:@"kzspin"];
+    [self.imgView.layer addAnimation:spin forKey:@"kzspin"];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat w = CGRectGetWidth(self.bounds), h = CGRectGetHeight(self.bounds);
+    CGFloat side = self.side > 0 ? self.side : 22.0;
+    self.dot.frame = CGRectMake((w - side) / 2.0 + self.offX, (h - side) / 2.0, side, side);
+    self.dot.layer.cornerRadius = side / 2.0;
+    self.imgView.frame = self.dot.bounds;
+}
+
+- (CGSize)sizeThatFits:(CGSize)size {
+    CGFloat side = self.side > 0 ? self.side : 22.0;
+    CGFloat pad = fabs(self.offX) * 2.0 + 2.0;
+    return CGSizeMake(side + pad, side);
+}
+@end
+
+static NSHashTable *gEyes = nil;   // 所有已交给系统的写轮眼容器（弱引用）
+static void KZEyeRegister(KZEyeContainerView *v) {
+    if (!gEyes) gEyes = [NSHashTable weakObjectsHashTable];
+    [gEyes addObject:v];
+}
+
+static KZEyeContainerView *KZMakeEye(BOOL left) {
+    if (!KZPrefBool(@"enabled", YES)) return nil;
+    if (left && !KZPrefBool(@"leftOn", YES)) return nil;
+    if (!left && !KZPrefBool(@"rightOn", YES)) return nil;
+    KZEyeContainerView *v = [[KZEyeContainerView alloc] initWithFrame:CGRectMake(0, 0, 44, 22)];
+    v.leftSide = left;
+    [v kzReload];
+    KZEyeRegister(v);
     return v;
 }
 
-#pragma mark - 代理 provider（替换系统录屏 element 的 viewProvider）
-
-static NSInteger gGen = 0;   // 每次改设置 +1，代理据此重建视图
+#pragma mark - 代理 provider
 
 @interface KZVCProvider : NSObject
 @property (nonatomic, strong) id systemElement;
-@property (nonatomic, strong) UIView *eye;
-@property (nonatomic) NSInteger gen;
+@property (nonatomic, strong) KZEyeContainerView *leftEye;
+@property (nonatomic, strong) KZEyeContainerView *minEye;
+@property (nonatomic, strong) KZEyeContainerView *rightEye;
 @end
 
 @implementation KZVCProvider
 
-- (UIView *)kzEye {
-    if (!KZPrefBool(@"enabled", YES)) return nil;
-    if (_eye && _gen == gGen) return _eye;
-    if (_eye) [_eye removeFromSuperview];
-    _eye = KZMakeEye();
-    _gen = gGen;
-    return _eye;
+- (KZEyeContainerView *)leftEye {
+    if (!_leftEye) _leftEye = KZMakeEye(YES);
+    return _leftEye;
+}
+- (KZEyeContainerView *)minEye {
+    if (!_minEye) _minEye = KZMakeEye(YES);
+    return _minEye;
+}
+- (KZEyeContainerView *)rightEye {
+    if (!_rightEye) _rightEye = KZMakeEye(NO);
+    return _rightEye;
 }
 
 - (NSString *)elementIdentifier {
@@ -179,42 +221,48 @@ static NSInteger gGen = 0;   // 每次改设置 +1，代理据此重建视图
 - (BOOL)_canShowWhileLocked { return YES; }
 
 - (UIView *)leadingView {
-    if (!KZPrefBool(@"leftOn", YES)) return [self kzOriginal:@selector(leadingView)];
-    UIView *e = [self kzEye];
-    if (e) KZOnce(@"lead", @"[prov] leadingView = 写轮眼");
-    return e ?: [self kzOriginal:@selector(leadingView)];
+    UIView *e = self.leftEye;
+    if (e) { KZOnce(@"lead", @"[prov] leadingView = 写轮眼"); return e; }
+    return [self kzOriginal:@selector(leadingView)];
 }
 - (UIView *)expandedLeadingView {
-    if (!KZPrefBool(@"leftOn", YES)) return [self kzOriginal:@selector(expandedLeadingView)];
-    UIView *e = [self kzEye];
+    UIView *e = self.leftEye;
     return e ?: [self kzOriginal:@selector(expandedLeadingView)];
 }
 - (UIView *)minimalView {
-    if (!KZPrefBool(@"leftOn", YES)) return [self kzOriginal:@selector(minimalView)];
-    UIView *e = [self kzEye];
-    if (e) KZOnce(@"min", @"[prov] minimalView = 写轮眼");
-    return e ?: [self kzOriginal:@selector(minimalView)];
+    UIView *e = self.minEye;
+    if (e) { KZOnce(@"min", @"[prov] minimalView = 写轮眼"); return e; }
+    return [self kzOriginal:@selector(minimalView)];
 }
-// trailing 一律交给系统：保留计时 / 暂停按钮
-- (UIView *)trailingView { return [self kzOriginal:@selector(trailingView)]; }
-- (UIView *)expandedTrailingView { return [self kzOriginal:@selector(expandedTrailingView)]; }
+- (UIView *)trailingView {
+    if (KZPrefBool(@"rightOn", NO)) {
+        UIView *e = self.rightEye;
+        if (e) { KZOnce(@"trail", @"[prov] trailingView = 写轮眼"); return e; }
+    }
+    return [self kzOriginal:@selector(trailingView)];
+}
+- (UIView *)expandedTrailingView {
+    if (KZPrefBool(@"rightOn", NO)) {
+        UIView *e = self.rightEye;
+        if (e) return e;
+    }
+    return [self kzOriginal:@selector(expandedTrailingView)];
+}
 
 - (UIView *)kzOriginal:(SEL)sel {
     id t = self.systemElement;
     if (!t) return nil;
     @try {
-        if ([t respondsToSelector:sel]) {
-            id (*fn)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
-            return fn(t, sel);
-        }
+        if ([t respondsToSelector:sel]) return ((id (*)(id, SEL))objc_msgSend)(t, sel);
     } @catch (...) {}
     return nil;
 }
 
 - (NSInteger)layoutMode { return [self kzInt:@selector(layoutMode) dflt:0]; }
-- (NSInteger)preferredLayoutMode { return [self kzInt:@selector(preferredLayoutMode) dflt:1]; }
-- (NSInteger)maximumSupportedLayoutMode { return [self kzInt:@selector(maximumSupportedLayoutMode) dflt:3]; }
-- (NSInteger)minimumSupportedLayoutMode { return [self kzInt:@selector(minimumSupportedLayoutMode) dflt:0]; }
+// 录屏时请求「展开」，把岛拉长，左侧才有足够空间放下素材（用户要求的做法）
+- (NSInteger)preferredLayoutMode { return 2; }
+- (NSInteger)maximumSupportedLayoutMode { return 3; }
+- (NSInteger)minimumSupportedLayoutMode { return 0; }
 - (NSInteger)kzInt:(SEL)sel dflt:(NSInteger)d {
     id t = self.systemElement;
     if (t && [t respondsToSelector:sel]) {
@@ -230,10 +278,11 @@ static NSInteger gGen = 0;   // 每次改设置 +1，代理据此重建视图
 }
 
 - (CGSize)sizeThatFitsSize:(CGSize)size forProvidedView:(UIView *)view inLayoutMode:(NSInteger)mode {
-    if (view.tag == KZ_EYE_TAG) {
-        CGFloat side = [(KZEyeCircleView *)view kzSide];
-        if (side <= 0) side = 22;
-        return CGSizeMake(side, side);
+    if ([view isKindOfClass:[KZEyeContainerView class]]) {
+        KZEyeContainerView *e = (KZEyeContainerView *)view;
+        CGFloat side = e.side > 0 ? e.side : 22.0;
+        CGFloat pad = fabs(e.offX) * 2.0 + 4.0;
+        return CGSizeMake(side + pad, side + 4.0);
     }
     id t = self.systemElement;
     if (t && [t respondsToSelector:_cmd]) {
@@ -279,7 +328,6 @@ static NSInteger gGen = 0;   // 每次改设置 +1，代理据此重建视图
 }
 @end
 
-// 每个 element 一份代理（element 弱引用，回收即释放）
 static NSMapTable *gProxies = nil;
 static KZVCProvider *KZProxyFor(id element) {
     if (!element) return nil;
@@ -288,9 +336,8 @@ static KZVCProvider *KZProxyFor(id element) {
     if (!p) {
         p = [[KZVCProvider alloc] init];
         p.systemElement = element;
-        p.gen = -1;
         [gProxies setObject:p forKey:element];
-        PLog(@"[prov] 新建代理 for %@", NSStringFromClass([element class]));
+        PLog(@"[prov] 新建代理 %@", NSStringFromClass([element class]));
     }
     return p;
 }
@@ -304,18 +351,13 @@ static BOOL KZIsRecordingElement(id element) {
     return [eid isKindOfClass:[NSString class]] && [eid.lowercaseString containsString:@"screenrecording"];
 }
 
-#pragma mark - hook：VC 每次取 provider 都返回代理
-
 static id (*origEVP)(id, SEL);
 static id kzEVP(id self, SEL _cmd) {
     id orig = nil;
     @try { orig = origEVP ? origEVP(self, _cmd) : nil; } @catch (...) {}
     if (KZIsRecordingElement(orig)) {
         KZVCProvider *p = KZProxyFor(orig);
-        if (p) {
-            KZOnce(@"evp", @"[vc] elementViewProvider -> KZVCProvider（代理）");
-            return p;
-        }
+        if (p) { KZOnce(@"evp", @"[vc] elementViewProvider -> 代理"); return p; }
     }
     return orig;
 }
@@ -332,25 +374,20 @@ static void KZInstall(void) {
             n++;
         }
     }
-    if (n) {
-        gHooked = YES;
-        PLog(@"[hook] hook elementViewProvider x%d", n);
-    }
+    if (n) { gHooked = YES; PLog(@"[hook] hook elementViewProvider x%d", n); }
 }
 
+// 改设置：原地更新所有已存在的写轮眼（不销毁，避免素材消失）
 static void KZReapply(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        gGen++;
-        if (gProxies) {
-            for (id key in [[gProxies keyEnumerator] allObjects]) {
-                KZVCProvider *p = [gProxies objectForKey:key];
-                if (p.eye) { [p.eye removeFromSuperview]; p.eye = nil; }
-                p.gen = -1;
-            }
+        NSArray *eyes = gEyes ? [[gEyes allObjects] copy] : @[];
+        for (KZEyeContainerView *e in eyes) {
+            if (!e.superview) continue;
+            @try { [e kzReload]; } @catch (...) {}
         }
-        gSeen = nil;
-        PLog(@"[apply] 重新应用 gen=%ld scale=%.2f offX=%.1f dur=%.2f", (long)gGen,
-             KZPrefNum(@"scale", 1.0), KZPrefNum(@"offX", 0.0), KZPrefNum(@"duration", 1.5));
+        PLog(@"[apply] 原地更新 %lu 个视图 scale=%.2f offX=%.1f dur=%.2f",
+             (unsigned long)eyes.count, KZPrefNum(@"scale", 1.0),
+             KZPrefNum(@"offX", 0.0), KZPrefNum(@"duration", 1.5));
     });
 }
 static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const void *ob, CFDictionaryRef i) {
@@ -358,7 +395,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.40 (elementViewProvider proxy)");
+    PLog(@"ctor v1.41 (wide layout + live update)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
