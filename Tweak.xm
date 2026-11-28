@@ -10,7 +10,7 @@
 
 static NSMutableString *gDump = nil;
 static void KZFlush(void) {
-    if (!gDump) return;
+    if (!gDump) gDump = [NSMutableString string];
     CFPreferencesSetAppValue(CFSTR("dump"), (__bridge CFStringRef)[gDump copy], CFSTR(KZ_DOMAIN));
     CFPreferencesAppSynchronize(CFSTR(KZ_DOMAIN));
 }
@@ -52,7 +52,7 @@ static UIImage *KZEyeImage(void) {
     return img;
 }
 
-// 1.35：固定 22×22、不跟随容器拉伸、不拦截点击 —— 否则展开大岛时会把整个岛盖住、暂停按钮点不到
+// 固定 22×22 的小圆：不管容器多大都居中保持原尺寸，不吃点击
 @interface KZEyeCircleView : UIView
 @end
 @implementation KZEyeCircleView
@@ -70,7 +70,7 @@ static UIImage *KZEyeImage(void) {
 }
 @end
 
-static UIView *KZEyeView(void) {
+static UIView *KZMakeEye(void) {
     UIView *v = [[KZEyeCircleView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
     v.backgroundColor = [UIColor blackColor];
     v.layer.cornerRadius = 11.0;
@@ -112,44 +112,51 @@ static BOOL KZIsRecordingElement(id self) {
     return eid.length > 0 && [eid.lowercaseString containsString:@"screenrecording"];
 }
 
-#pragma mark - 给系统录屏 element 提供视图（不再注册第二个 element）
-
-static UIView *gLeadView = nil;
-static UIView *(*origLead)(id, SEL);
-static UIView *kzLead(id self, SEL _cmd) {
-    UIView *o = origLead ? origLead(self, _cmd) : nil;
-    @try {
-        if (KZIsRecordingElement(self)) {
-            KZOnce(@"lead", @"[lead] 提供写轮眼 via leadingView");
-            if (!gLeadView) gLeadView = KZEyeView();
-            return gLeadView;
-        }
-    } @catch (...) {}
-    return o;
+// —— 每个 element 一份视图，存在关联对象上（暂停/恢复会换 element 实例）
+static char kEyeKey;
+static UIView *KZEyeFor(id self) {
+    UIView *v = objc_getAssociatedObject(self, &kEyeKey);
+    if (!v) {
+        v = KZMakeEye();
+        objc_setAssociatedObject(self, &kEyeKey, v, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return v;
 }
 
-static UIView *(*origExpLead)(id, SEL);
-static UIView *kzExpLead(id self, SEL _cmd) {
-    UIView *o = origExpLead ? origExpLead(self, _cmd) : nil;
-    @try {
-        if (KZIsRecordingElement(self)) {
-            KZOnce(@"explead", @"[lead] 提供写轮眼 via expandedLeadingView");
-            if (!gLeadView) gLeadView = KZEyeView();
-            return gLeadView;
-        }
-    } @catch (...) {}
-    return o;
+// —— 倒计时期间不替换：第一次看到录屏 element 时记时间，满 3.6s 才开始给写轮眼
+static double gFirstSeen = 0;
+static double KZStartTime(id self) {
+    static char kTKey;
+    NSNumber *n = objc_getAssociatedObject(self, &kTKey);
+    if (n) return n.doubleValue;
+    double t = CACurrentMediaTime();
+    objc_setAssociatedObject(self, &kTKey, @(t), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (gFirstSeen == 0) gFirstSeen = t;
+    return t;
 }
 
-static UIView *gMinView = nil;
+static BOOL KZCountdownDone(id self) {
+    double t = KZStartTime(self);
+    BOOL done = (CACurrentMediaTime() - t) >= 3.6;
+    static NSMutableSet *logged = nil;
+    if (!logged) logged = [NSMutableSet set];
+    NSString *k = [NSString stringWithFormat:@"cd-%d", done];
+    if (![logged containsObject:k]) {
+        [logged addObject:k];
+        PLog(@"[lead] 倒计时 %@（%.1fs）", done ? @"已结束，开始显示写轮眼" : @"中，保持系统界面", CACurrentMediaTime() - t);
+    }
+    return done;
+}
+
+// 只替换 minimalView（收起时那个小点），leading/expanded 完全留给系统：
+// 这样 3-2-1 倒计时、暂停按钮、数字、绿勾都是原生的，不会被盖住
 static UIView *(*origMinimal)(id, SEL);
 static UIView *kzMinimal(id self, SEL _cmd) {
     UIView *o = origMinimal ? origMinimal(self, _cmd) : nil;
     @try {
-        if (KZIsRecordingElement(self)) {
+        if (KZIsRecordingElement(self) && KZCountdownDone(self)) {
             KZOnce(@"minimal", @"[lead] 提供写轮眼 via minimalView");
-            if (!gMinView) gMinView = KZEyeView();
-            return gMinView;
+            return KZEyeFor(self);
         }
     } @catch (...) {}
     return o;
@@ -160,21 +167,16 @@ static void KZInstall(void) {
     if (gHooked) return;
     Class c = NSClassFromString(@"SBSystemApertureSceneElement");
     if (!c) { KZOnce(@"noclass", @"[hook] 找不到 SBSystemApertureSceneElement"); return; }
-    int n = 0;
-    SEL s1 = NSSelectorFromString(@"leadingView");
-    SEL s2 = NSSelectorFromString(@"expandedLeadingView");
     SEL s3 = NSSelectorFromString(@"minimalView");
-    if ([c instancesRespondToSelector:s1]) { MSHookMessageEx(c, s1, (IMP)kzLead, (IMP *)&origLead); n++; }
-    if ([c instancesRespondToSelector:s2]) { MSHookMessageEx(c, s2, (IMP)kzExpLead, (IMP *)&origExpLead); n++; }
-    if ([c instancesRespondToSelector:s3]) { MSHookMessageEx(c, s3, (IMP)kzMinimal, (IMP *)&origMinimal); n++; }
-    if (n > 0) {
+    if ([c instancesRespondToSelector:s3]) {
+        MSHookMessageEx(c, s3, (IMP)kzMinimal, (IMP *)&origMinimal);
         gHooked = YES;
-        PLog(@"[hook] 已 hook %d 个视图方法", n);
+        PLog(@"[hook] 只 hook minimalView（leading 留给系统）");
     }
 }
 
 %ctor {
-    PLog(@"ctor v1.35 (fixed size view)");
+    PLog(@"ctor v1.36 (minimal only, countdown safe)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try { KZInstall(); } @catch (...) {}
