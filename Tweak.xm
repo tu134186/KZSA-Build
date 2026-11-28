@@ -5,7 +5,6 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <stdarg.h>
-#import "kzeye_b64.h"
 #import "kzpresets_b64.h"
 
 #define KZ_DOMAIN "com.minis.kzprobe"
@@ -115,6 +114,31 @@ static BOOL KZCaptured(void) {
         for (UIScreen *s in [UIScreen screens]) if (s.isCaptured) return YES;
     } @catch (...) {}
     return NO;
+}
+
+// 暂停时 isCaptured 会短暂变 NO，但录屏其实还在 → 用 RPScreenRecorder.isRecording 兜底
+static BOOL KZRecorderRecording(void) {
+    @try {
+        Class rp = NSClassFromString(@"RPScreenRecorder");
+        if (!rp) return NO;
+        SEL sh = NSSelectorFromString(@"sharedRecorder");
+        if (![rp respondsToSelector:sh]) return NO;
+        id rec = ((id (*)(id, SEL))objc_msgSend)(rp, sh);
+        SEL ir = NSSelectorFromString(@"isRecording");
+        if (rec && [rec respondsToSelector:ir]) {
+            return ((BOOL (*)(id, SEL))objc_msgSend)(rec, ir);
+        }
+    } @catch (...) {}
+    return NO;
+}
+static BOOL KZRecordingActive(void) { return KZCaptured() || KZRecorderRecording(); }
+
+// 倒计时保护：录屏开始后 3.3 秒内不注入，避免盖住系统 3-2-1 动画
+static double gActiveSince = 0;
+static double gEyeGate = 3.3;
+static BOOL KZEyeAllowed(void) {
+    if (gActiveSince <= 0) return NO;
+    return (CACurrentMediaTime() - gActiveSince) >= gEyeGate;
 }
 
 #pragma mark - 写轮眼视图
@@ -237,8 +261,9 @@ static void KZTrack(UIView *v) {
 
 static void KZInjectInto(UIView *host, NSString *slot) {
     if (!host) return;
-    if (!KZPrefBool(@"enabled", YES)) return;
     KZTrack(host);
+    if (!KZPrefBool(@"enabled", YES)) return;
+    if (!KZEyeAllowed()) return;    // 3-2-1 倒计时期间不动系统界面
 
     KZEyeDot *eye = nil;
     for (UIView *s in host.subviews) {
@@ -332,17 +357,27 @@ static void KZInstall(void) {
 #pragma mark - 保活 / 清理
 
 static NSTimer *gTimer = nil;
-static BOOL gWasCap = NO;
+static BOOL gWasActive = NO;
+static double gLastActiveAt = 0;
 
 static void KZTick(void) {
     KZInstall();
-    BOOL cap = KZCaptured();
-    if (cap != gWasCap) {
-        gWasCap = cap;
+    BOOL active = KZRecordingActive();
+    double now = CACurrentMediaTime();
+
+    if (active) {
+        gLastActiveAt = now;
+        if (!gWasActive) {
+            gWasActive = YES;
+            gActiveSince = now;
+            gSeen = nil;
+            PLog(@"[state] 录屏开始（倒计时保护 %.1fs）", gEyeGate);
+        }
+    } else if (gWasActive && (now - gLastActiveAt) > 3.0) {
+        // 连续 3 秒都检测不到录屏才算结束 —— 暂停时 isCaptured 会短暂掉一下，不能立刻清
+        gWasActive = NO;
+        gActiveSince = 0;
         gSeen = nil;
-        PLog(@"[state] captured=%d", cap);
-    }
-    if (!cap) {
         if (gHosts && gHosts.count) {
             for (UIView *h in [[gHosts allObjects] copy]) {
                 for (UIView *s in [h.subviews copy]) {
@@ -352,14 +387,20 @@ static void KZTick(void) {
             [gHosts removeAllObjects];
             KZOnce(@"clean", @"[inject] 录屏结束，已移除素材");
         }
+        PLog(@"[state] captured=0");
         return;
     }
+
+    if (!gWasActive) return;
+
+    // 倒计时没走完，什么都不做（但 host 已经在 KZInjectInto 里登记过了）
+    if (!KZEyeAllowed()) return;
+
+    // 每 tick 都补注入：morph 重建容器、暂停变宽、独立岛新建，都会走到这里
     if (!gHosts) return;
     for (UIView *h in [[gHosts allObjects] copy]) {
         if (!h.window) continue;
-        for (UIView *s in h.subviews) {
-            if (s.tag == KZ_EYE_TAG && [s isKindOfClass:[KZEyeDot class]]) KZLayoutEye((KZEyeDot *)s, h);
-        }
+        KZInjectInto(h, @"tick");
     }
 }
 
@@ -367,7 +408,7 @@ static void KZTick(void) {
 static void KZReapply(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         gSeen = nil;
-        if (gHosts) {
+        if (gHosts && KZEyeAllowed()) {
             for (UIView *h in [[gHosts allObjects] copy]) {
                 KZInjectInto(h, @"reapply");
             }
@@ -382,7 +423,7 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.47 (presets, free size, no l/r switch)");
+    PLog(@"ctor v1.48 (stable pause, countdown gate)");
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
