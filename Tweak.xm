@@ -31,11 +31,13 @@ static __unsafe_unretained id gElementHost = nil;
 static BOOL gLaunched = NO;
 static BOOL gRegistered = NO;
 static BOOL gLastCaptured = NO;
+static UIView *gLeadingViewRef = nil;
 static double gLaunchAt = 0;
 static double gCtorAt = 0;
 static void KZRegisterOnce(void);
 static void KZProbeAuthority(id mgr);
 static void KZReportOrder(void);
+static void KZDiag(void);
 static BOOL (*origNeg)(id, SEL, id);
 static BOOL kzNeg(id self, SEL _cmd, id elem);
 static id (*origElemVC)(id, SEL, id);
@@ -163,6 +165,7 @@ static UIImage *KZEyeImage(void) {
 - (UIView *)leadingView {
     PLog(@"[prov] leadingView");
     if (!_kzLeading) _kzLeading = [self kzMakeView];
+    gLeadingViewRef = _kzLeading;
     return _kzLeading;
 }
 - (UIView *)trailingView { return nil; }
@@ -402,6 +405,8 @@ static void KZRegisterOnce(void) {
                 @catch (NSException *e) { PLog(@"[reg] invalidate 异常"); }
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZReportOrder(); });
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZReportOrder(); });
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZDiag(); });
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ KZDiag(); });
             }
     } @catch (NSException *e) {
         PLog(@"[reg] 异常: %@", e.reason);
@@ -445,6 +450,34 @@ static void KZTryHook(void) {
             PLog(@"[auth] hook elementViewControllerForElement");
         } else PLog(@"[auth] elementViewControllerForElement 不存在");
     }
+}
+
+static void KZDiag(void) {
+    if (!gManager || !gProvider) { PLog(@"[diag] manager/provider 为空"); return; }
+    @try {
+        SEL s = NSSelectorFromString(@"elementViewControllerForElement:");
+        id vc = ((id (*)(id, SEL, id))objc_msgSend)(gManager, s, gProvider);
+        long lm = -1;
+        if (vc) {
+            SEL ls = NSSelectorFromString(@"layoutMode");
+            if ([vc respondsToSelector:ls]) lm = (long)((NSInteger (*)(id, SEL))objc_msgSend)(vc, ls);
+        }
+        PLog(@"[diag] vc=%@ layout=%ld", vc ? NSStringFromClass([vc class]) : @"nil", lm);
+        UIView *v = gLeadingViewRef;
+        if (v) {
+            CGRect f = [v convertRect:v.bounds toView:nil];
+            PLog(@"[diag] view super=%@ win=%d frame=%.0f,%.0f %.0fx%.0f hidden=%d alpha=%.2f",
+                 v.superview ? NSStringFromClass([v.superview class]) : @"nil",
+                 v.window != nil, f.origin.x, f.origin.y, f.size.width, f.size.height, v.hidden, v.alpha);
+        } else {
+            PLog(@"[diag] leadingView 还没被创建");
+        }
+        SEL ms = NSSelectorFromString(@"_maximumNumberOfSimultaneouslyVisibleElements");
+        if ([gManager respondsToSelector:ms]) {
+            NSUInteger n = ((NSUInteger (*)(id, SEL))objc_msgSend)(gManager, ms);
+            PLog(@"[diag] maxVisible=%lu", (unsigned long)n);
+        }
+    } @catch (NSException *e) { PLog(@"[diag] 异常 %@", e.reason); }
 }
 
 static void KZReportOrder(void) {
@@ -497,7 +530,7 @@ static void KZReport(void) {
 
 %ctor {
     gCtorAt = CACurrentMediaTime();
-    PLog(@"ctor v1.31 (cached views + capture gate)");
+    PLog(@"ctor v1.32 (view diag)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
