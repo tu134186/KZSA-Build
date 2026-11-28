@@ -52,12 +52,31 @@ static UIImage *KZEyeImage(void) {
     return img;
 }
 
+// 1.35：固定 22×22、不跟随容器拉伸、不拦截点击 —— 否则展开大岛时会把整个岛盖住、暂停按钮点不到
+@interface KZEyeCircleView : UIView
+@end
+@implementation KZEyeCircleView
+- (void)setFrame:(CGRect)frame {
+    CGFloat side = 22.0;
+    CGRect f = frame;
+    f.origin.x += (frame.size.width - side) / 2.0;
+    f.origin.y += (frame.size.height - side) / 2.0;
+    f.size = CGSizeMake(side, side);
+    [super setFrame:f];
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    for (UIView *s in self.subviews) s.frame = self.bounds;
+}
+@end
+
 static UIView *KZEyeView(void) {
-    UIView *v = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
+    UIView *v = [[KZEyeCircleView alloc] initWithFrame:CGRectMake(0, 0, 22, 22)];
     v.backgroundColor = [UIColor blackColor];
     v.layer.cornerRadius = 11.0;
     v.layer.masksToBounds = YES;
-    v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    v.userInteractionEnabled = NO;
+    v.autoresizingMask = UIViewAutoresizingNone;
 
     UIImage *img = KZEyeImage();
     if (!img) {
@@ -67,7 +86,8 @@ static UIView *KZEyeView(void) {
     UIImageView *iv = [[UIImageView alloc] initWithImage:img];
     iv.frame = v.bounds;
     iv.contentMode = UIViewContentModeScaleAspectFill;
-    iv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    iv.userInteractionEnabled = NO;
+    iv.autoresizingMask = UIViewAutoresizingNone;
     [v addSubview:iv];
 
     CABasicAnimation *spin = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
@@ -94,13 +114,15 @@ static BOOL KZIsRecordingElement(id self) {
 
 #pragma mark - 给系统录屏 element 提供视图（不再注册第二个 element）
 
+static UIView *gLeadView = nil;
 static UIView *(*origLead)(id, SEL);
 static UIView *kzLead(id self, SEL _cmd) {
     UIView *o = origLead ? origLead(self, _cmd) : nil;
     @try {
         if (KZIsRecordingElement(self)) {
             KZOnce(@"lead", @"[lead] 提供写轮眼 via leadingView");
-            return KZEyeView();
+            if (!gLeadView) gLeadView = KZEyeView();
+            return gLeadView;
         }
     } @catch (...) {}
     return o;
@@ -112,19 +134,22 @@ static UIView *kzExpLead(id self, SEL _cmd) {
     @try {
         if (KZIsRecordingElement(self)) {
             KZOnce(@"explead", @"[lead] 提供写轮眼 via expandedLeadingView");
-            return KZEyeView();
+            if (!gLeadView) gLeadView = KZEyeView();
+            return gLeadView;
         }
     } @catch (...) {}
     return o;
 }
 
+static UIView *gMinView = nil;
 static UIView *(*origMinimal)(id, SEL);
 static UIView *kzMinimal(id self, SEL _cmd) {
     UIView *o = origMinimal ? origMinimal(self, _cmd) : nil;
     @try {
         if (KZIsRecordingElement(self)) {
             KZOnce(@"minimal", @"[lead] 提供写轮眼 via minimalView");
-            return KZEyeView();
+            if (!gMinView) gMinView = KZEyeView();
+            return gMinView;
         }
     } @catch (...) {}
     return o;
@@ -149,7 +174,7 @@ static void KZInstall(void) {
 }
 
 %ctor {
-    PLog(@"ctor v1.34 (provide views, no element)");
+    PLog(@"ctor v1.35 (fixed size view)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try { KZInstall(); } @catch (...) {}
