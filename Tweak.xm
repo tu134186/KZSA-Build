@@ -25,6 +25,7 @@ static void PLog(NSString *fmt, ...) {
 
 static id gManager = nil;
 static id gProvider = nil;
+static __unsafe_unretained id gActivityHost = nil;
 static BOOL gLaunched = NO;
 static double gLaunchAt = 0;
 static double gCtorAt = 0;
@@ -75,7 +76,35 @@ static void kzPromote(id self, SEL _cmd) {
 
 #pragma mark - element provider
 
-@interface KZElementProvider : NSObject
+
+#pragma mark - SystemAperture 私有协议（公开 SDK 没有，自己声明）
+
+@protocol SAElementIdentifying <NSObject>
+- (NSString *)clientIdentifier;
+- (NSString *)elementIdentifier;
+@end
+
+@protocol SAElement <SAElementIdentifying>
+- (id)viewProvider;
+@end
+
+@protocol SAElementViewProviding <NSObject>
+- (id)element;
+@end
+
+@protocol SAActivityBehavior <NSObject>
+- (BOOL)hasActivityBehavior;
+@end
+
+@protocol SAUILayoutSpecifying <NSObject>
+- (NSInteger)layoutMode;
+- (NSInteger)maximumSupportedLayoutMode;
+- (NSInteger)minimumSupportedLayoutMode;
+- (NSInteger)preferredLayoutMode;
+- (void)setLayoutMode:(NSInteger)mode reason:(NSInteger)reason;
+@end
+
+@interface KZElementProvider : NSObject <SAElement, SAElementViewProviding, SAActivityBehavior, SAUILayoutSpecifying>
 
 @end
 
@@ -137,6 +166,13 @@ static void kzPromote(id self, SEL _cmd) {
 
 - (NSString *)clientIdentifier { return @"com.minis.kzsa"; }
 
+// 1.29：manager 的 _elementViewControllerForElement:creatingIfNecessary: 里，
+// 如果 element 既没有 alert 也没有 activity 行为，会直接返回 nil（这就是 1.27 的 [vc] ... -> nil）
+- (BOOL)hasActivityBehavior { PLog(@"[prov] hasActivityBehavior"); return YES; }
+- (BOOL)hasAlertBehavior { return NO; }
+- (id)activityHost { return gActivityHost; }
+- (void)setActivityHost:(id)host { gActivityHost = host; PLog(@"[prov] setActivityHost %@", host ? NSStringFromClass([host class]) : @"nil"); }
+
 // SAElement 要求 viewProvider；SAElementViewProviding 要求 element —— 两个都必须返回 self，
 // 否则 manager 拿到 nil 会直接跳过这个 element（1.27 补上）
 - (id)viewProvider { PLog(@"[prov] viewProvider"); return self; }
@@ -155,6 +191,8 @@ static void kzPromote(id self, SEL _cmd) {
 static id gAssertion = nil;
 static __unsafe_unretained id gAuthority = nil;
 static id (*origElemVCC)(id, SEL, id, BOOL);
+static int gVCNilCount = 0;
+static BOOL gVCGaveUp = NO;
 static NSArray *(*origProbeOrder)(id, SEL, NSArray *, NSArray *);
 
 static NSString *KZElemID(id elem) {
@@ -189,6 +227,25 @@ static id kzElemVCC(id self, SEL _cmd, id elem, BOOL create) {
     id r = nil;
     @try { r = origElemVCC ? origElemVCC(self, _cmd, elem, create) : nil; } @catch (...) {}
     PLog(@"[vc] _elemVC(%@) create=%d -> %@", KZElemID(elem), create, r ? NSStringFromClass([r class]) : @"nil");
+
+    // 安全网：我们的 element 如果一直造不出 VC，会让系统录屏 element 也被卡住不显示。
+    // 连续 8 次仍为 nil 就释放 assertion，把系统恢复原状（下个版本再修）。
+    if (create && !r && elem == gProvider) {
+        gVCNilCount++;
+        PLog(@"[vc] KZ 的 VC 仍为 nil（第 %d 次）", gVCNilCount);
+        if (gVCNilCount >= 8 && !gVCGaveUp) {
+            gVCGaveUp = YES;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                @try {
+                    SEL inv = NSSelectorFromString(@"invalidate");
+                    if (gAssertion && [gAssertion respondsToSelector:inv]) {
+                        ((void (*)(id, SEL))objc_msgSend)(gAssertion, inv);
+                        PLog(@"[vc] 已放弃并 invalidate assertion，恢复系统录屏");
+                    }
+                } @catch (NSException *e) { PLog(@"[vc] invalidate 异常 %@", e.reason); }
+            });
+        }
+    }
     return r;
 }
 
@@ -353,7 +410,7 @@ static void KZReport(void) {
 
 %ctor {
     gCtorAt = CACurrentMediaTime();
-    PLog(@"ctor v1.28 (launch-gated)");
+    PLog(@"ctor v1.29 (activity behavior)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
