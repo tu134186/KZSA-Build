@@ -5,6 +5,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <stdarg.h>
+#import <dlfcn.h>
 #import "kzpresets_b64.h"
 
 #define KZ_DOMAIN "com.minis.kzprobe"
@@ -151,7 +152,7 @@ static BOOL KZRecordingActive(void) { return KZCaptured() || KZRecorderRecording
 
 // 倒计时保护：录屏开始后 3.3 秒内不注入，避免盖住系统 3-2-1 动画
 static double gActiveSince = 0;
-static double gEyeGate = 3.3;
+static double gEyeGate = 3.0;
 static BOOL KZEyeAllowed(void) {
     if (gActiveSince <= 0) return NO;
     return (CACurrentMediaTime() - gActiveSince) >= gEyeGate;
@@ -273,6 +274,35 @@ static void KZInjectInto(UIView *host, NSString *slot);
 static UIView *KZPillAncestor(UIView *v);
 static NSHashTable *gLeadingPills;
 
+// 从 SystemAperture 控制器直接拿 registeredElements —— 比扫视图树可靠
+static id KZFindRecordingElementViaManager(void) {
+    @try {
+        id app = [UIApplication sharedApplication];
+        SEL cs = NSSelectorFromString(@"systemApertureControllerForMainDisplay");
+        if (![app respondsToSelector:cs]) return nil;
+        id vc = ((id (*)(id, SEL))objc_msgSend)(app, cs);
+        if (!vc) return nil;
+
+        id mgr = nil;
+        Ivar iv = class_getInstanceVariable([vc class], "_systemApertureManager");
+        if (iv) mgr = object_getIvar(vc, iv);
+        if (!mgr) {
+            @try { mgr = [vc valueForKey:@"systemApertureManager"]; } @catch (...) {}
+        }
+        if (!mgr) return nil;
+
+        SEL rg = NSSelectorFromString(@"registeredElements");
+        if (![mgr respondsToSelector:rg]) return nil;
+        NSArray *els = ((id (*)(id, SEL))objc_msgSend)(mgr, rg);
+        if (![els isKindOfClass:[NSArray class]]) return nil;
+
+        for (id e in els) {
+            if (KZIsRecording(e)) return e;
+        }
+    } @catch (...) {}
+    return nil;
+}
+
 static NSArray<UIWindow *> *KZAllWindows(void) {
     NSMutableArray *out = [NSMutableArray array];
     @try {
@@ -319,6 +349,20 @@ static UIView *KZPillAncestor(UIView *v) {
 // 扫全树里所有 accessory view，判定属于录屏 element 的就注入
 static NSInteger KZScanAccessories(void) {
     NSInteger found = 0;
+
+    // 首选：直接问 manager 要录屏 element，再主动调它的三个 getter
+    id rec = KZFindRecordingElementViaManager();
+    if (rec) {
+        NSArray *sels = @[ @"leadingView", @"expandedLeadingView", @"minimalView" ];
+        for (NSString *name in sels) {
+            SEL sel = NSSelectorFromString(name);
+            if ([rec respondsToSelector:sel]) {
+                @try { ((id (*)(id, SEL))objc_msgSend)(rec, sel); found++; } @catch (...) {}
+            }
+        }
+        if (found > 0) return found;
+    }
+
     NSMutableArray *stack = [NSMutableArray array];
     for (UIWindow *w in KZAllWindows()) [stack addObject:w];
 
@@ -480,13 +524,16 @@ static NSTimer *gTimer = nil;
 static BOOL gWasActive = NO;
 static double gLastActiveAt = 0;
 
-static void KZRemoveAllEyes(void) {
-    if (!gHosts) return;
-    for (UIView *h in [[gHosts allObjects] copy]) {
-        for (UIView *s in [h.subviews copy]) {
-            if (s.tag == KZ_EYE_TAG) [s removeFromSuperview];
-        }
+// 递归扫全窗口，把所有 tag==KZ_EYE_TAG 的视图摘掉（不依赖 gHosts 记录）
+static void KZSweepEyes(UIView *v, NSInteger depth) {
+    if (!v || depth > 24) return;
+    for (UIView *s in [v.subviews copy]) {
+        if (s.tag == KZ_EYE_TAG) { [s removeFromSuperview]; continue; }
+        KZSweepEyes(s, depth + 1);
     }
+}
+static void KZRemoveAllEyes(void) {
+    for (UIWindow *w in KZAllWindows()) KZSweepEyes(w, 0);
     [gHosts removeAllObjects];
     if (gLeadingPills) [gLeadingPills removeAllObjects];
 }
@@ -494,18 +541,22 @@ static void KZRemoveAllEyes(void) {
 static void KZTick(void) {
     KZInstall();
 
-    // 总开关：关掉就立刻把所有素材摘掉（不需要等录屏结束）
-    if (!KZPrefBool(@"enabled", YES)) {
-        static BOOL cleared = NO;
-        if (!cleared) {
-            cleared = YES;
+    // 总开关：关掉立刻清除；重新打开立刻重扫注入
+    static BOOL gSwitchWasOn = YES;
+    BOOL on = KZPrefBool(@"enabled", YES);
+    if (!on) {
+        if (gSwitchWasOn) {
+            gSwitchWasOn = NO;
             KZRemoveAllEyes();
             PLog(@"[switch] 总开关关闭，已移除全部素材");
         }
         return;
-    } else {
-        static BOOL loggedOn = NO;
-        if (!loggedOn) { loggedOn = YES; PLog(@"[switch] 总开关开启"); }
+    }
+    if (!gSwitchWasOn) {
+        gSwitchWasOn = YES;
+        gSeen = nil;
+        PLog(@"[switch] 总开关开启，重新注入");
+        if (KZRecordingActive()) KZScanAccessories();
     }
 
     BOOL active = KZRecordingActive();
@@ -558,6 +609,11 @@ static void KZTick(void) {
 static void KZReapply(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         gSeen = nil;
+        if (!KZPrefBool(@"enabled", YES)) {
+            KZRemoveAllEyes();
+            PLog(@"[switch] 通知：总开关关闭，已移除全部素材");
+            return;
+        }
         if (gHosts && KZEyeAllowed()) {
             for (UIView *h in [[gHosts allObjects] copy]) {
                 KZInjectInto(h, @"reapply");
@@ -573,25 +629,18 @@ static void KZNotifyCB(CFNotificationCenterRef c, void *o, CFStringRef n, const 
 }
 
 %ctor {
-    PLog(@"ctor v1.51 (multi custom, edit mode)");
+    {
+        Dl_info di; NSString *path = @"?";
+        if (dladdr((void *)&KZTick, &di) && di.dli_fname) path = [NSString stringWithUTF8String:di.dli_fname];
+        PLog(@"ctor v1.52 (manager scan, instant switch) dylib=%@", path);
+    }
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, KZNotifyCB,
                                     CFSTR(KZ_NOTIFY), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         KZInstall();
         if (!gTimer || !gTimer.valid) {
-            gTimer = [NSTimer scheduledTimerWithTimeInterval:1.2 repeats:YES block:^(NSTimer *t) {
-                @try {
-                    KZTick();
-                    // 录屏中提速到 0.1s，结束后降回 1.2s，降低待机开销
-                    NSTimeInterval want = gWasActive ? 0.1 : 1.2;
-                    if (fabs(t.timeInterval - want) > 0.01) {
-                        [t invalidate];
-                        gTimer = [NSTimer scheduledTimerWithTimeInterval:want repeats:YES block:^(NSTimer *tt) {
-                            @try { KZTick(); } @catch (...) {}
-                        }];
-                        [[NSRunLoop mainRunLoop] addTimer:gTimer forMode:NSRunLoopCommonModes];
-                    }
-                } @catch (NSException *e) { PLog(@"[tick] %@", e.reason); }
+            gTimer = [NSTimer scheduledTimerWithTimeInterval:0.2 repeats:YES block:^(NSTimer *t) {
+                @try { KZTick(); } @catch (NSException *e) { PLog(@"[tick] %@", e.reason); }
             }];
             [[NSRunLoop mainRunLoop] addTimer:gTimer forMode:NSRunLoopCommonModes];
         }
