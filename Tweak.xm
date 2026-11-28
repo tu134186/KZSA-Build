@@ -27,6 +27,7 @@ static id gManager = nil;
 static id gProvider = nil;
 static BOOL gLaunched = NO;
 static double gLaunchAt = 0;
+static double gCtorAt = 0;
 static void KZRegisterOnce(void);
 static void KZProbeAuthority(id mgr);
 static BOOL (*origNeg)(id, SEL, id);
@@ -351,10 +352,17 @@ static void KZReport(void) {
 %end
 
 %ctor {
+    gCtorAt = CACurrentMediaTime();
     PLog(@"ctor v1.28 (launch-gated)");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
             @try {
+                // 兜底：万一 didFinishLaunching 的 hook 没触发，10s 后也认为启动完成
+                if (!gLaunched && gCtorAt > 0 && CACurrentMediaTime() - gCtorAt > 10.0) {
+                    gLaunched = YES;
+                    gLaunchAt = CACurrentMediaTime();
+                    PLog(@"[boot] fallback 启动判定（didFinishLaunching 未触发）");
+                }
                 KZTryHook();
                 KZRegisterOnce();
                 KZReport();
