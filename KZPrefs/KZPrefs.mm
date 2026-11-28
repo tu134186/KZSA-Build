@@ -549,6 +549,12 @@ static BOOL gPresetEditMode = NO;
     return out ?: sqImg;
 }
 
+- (void)alert:(NSString *)msg {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:nil message:msg preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
 - (void)storeImage:(UIImage *)img {
     @try {
         UIImage *out = [self normalizeImage:img];
@@ -573,11 +579,58 @@ static BOOL gPresetEditMode = NO;
     }
 }
 
-- (void)importPhoto {
+- (void)pickFromPhotos {
     UIImagePickerController *p = [[UIImagePickerController alloc] init];
     p.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
     p.delegate = self;
     [self presentViewController:p animated:YES completion:nil];
+}
+
+- (void)pickFromFiles {
+    NSMutableArray *types = [NSMutableArray array];
+    Class UTTypeCls = NSClassFromString(@"UTType");
+    if (UTTypeCls && [UTTypeCls respondsToSelector:@selector(typeWithIdentifier:)]) {
+        for (NSString *ident in @[@"public.png", @"public.jpeg", @"public.heic", @"public.image"]) {
+            id t = ((id (*)(id, SEL, id))objc_msgSend)(UTTypeCls, @selector(typeWithIdentifier:), ident);
+            if (t) [types addObject:t];
+        }
+    }
+    UIDocumentPickerViewController *d;
+    if (types.count && [UIDocumentPickerViewController instancesRespondToSelector:@selector(initForOpeningContentTypes:)]) {
+        d = ((id (*)(id, SEL, id))objc_msgSend)([UIDocumentPickerViewController alloc], @selector(initForOpeningContentTypes:), types);
+    } else {
+        d = [[UIDocumentPickerViewController alloc] initWithDocumentTypes:@[@"public.image"] inMode:UIDocumentPickerModeImport];
+    }
+    d.delegate = self;
+    d.allowsMultipleSelection = NO;
+    [self presentViewController:d animated:YES completion:nil];
+}
+
+- (void)importPhoto {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"导入素材"
+                                                              message:@"选择图片来源"
+                                                       preferredStyle:UIAlertControllerStyleActionSheet];
+    [a addAction:[UIAlertAction actionWithTitle:@"从相册选择" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        [self pickFromPhotos];
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"从文件选择（PNG/JPG）" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        [self pickFromFiles];
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    a.popoverPresentationController.sourceView = self.view;
+    a.popoverPresentationController.sourceRect = CGRectMake(self.view.bounds.size.width / 2, self.view.bounds.size.height / 2, 1, 1);
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)c didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSURL *u = urls.firstObject;
+    if (!u) return;
+    BOOL access = [u startAccessingSecurityScopedResource];
+    NSData *data = [NSData dataWithContentsOfURL:u];
+    UIImage *img = data.length > 100 ? [UIImage imageWithData:data] : nil;
+    if (access) [u stopAccessingSecurityScopedResource];
+    if (img) [self storeImage:img];
+    else [self alert:@"这个文件读不出图片，换一张试试"];
 }
 
 - (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary *)info {
